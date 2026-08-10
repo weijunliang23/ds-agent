@@ -20,6 +20,21 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
     return runtime.handleMessage(sessionId, text, sanitizeChatOptions(options))
   })
 
+  ipcMain.handle('chat:stream:start', async (event, streamId: unknown, sessionId: unknown, text: unknown, options: unknown) => {
+    const sender = event.sender
+    try {
+      if (typeof streamId !== 'string' || typeof sessionId !== 'string' || typeof text !== 'string') {
+        throw new Error('参数错误：streamId、sessionId 与 text 必须为字符串')
+      }
+      await runtime.streamMessage(sessionId, text, sanitizeChatOptions(options), (ev) => {
+        sender.send('chat:stream', { streamId, ...ev })
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      sender.send('chat:stream', { streamId, type: 'error', message })
+    }
+  })
+
   ipcMain.handle('chat:fim', (_event, input: unknown) => {
     return runtime.fim(sanitizeFimInput(input))
   })

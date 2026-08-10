@@ -3,6 +3,11 @@ import type { SettingsStore } from '../shared/settings'
 import type { ContextEngine } from './context-engine'
 import type { ChatOptions, FimInput, ModelRouter } from './model-router'
 
+export type StreamMessageEvent =
+  | { type: 'reasoning'; text: string }
+  | { type: 'content'; text: string }
+  | { type: 'done'; content: string; reasoningContent?: string }
+
 export interface Runtime {
   start(): Promise<void>
   stop(): Promise<void>
@@ -10,6 +15,12 @@ export interface Runtime {
   getConfig(): AppConfig
   reloadConfig(): Promise<void>
   handleMessage(sessionId: string, text: string, options?: ChatOptions): Promise<string>
+  streamMessage(
+    sessionId: string,
+    text: string,
+    options: ChatOptions | undefined,
+    onEvent: (event: StreamMessageEvent) => void
+  ): Promise<void>
   fim(input: FimInput): Promise<string>
 }
 
@@ -51,6 +62,21 @@ export class RuntimeImpl implements Runtime {
   }
 
   async handleMessage(sessionId: string, text: string, options?: ChatOptions): Promise<string> {
+    let content = ''
+    await this.streamMessage(sessionId, text, options, (event) => {
+      if (event.type === 'content') {
+        content += event.text
+      }
+    })
+    return content
+  }
+
+  async streamMessage(
+    sessionId: string,
+    text: string,
+    options: ChatOptions | undefined,
+    onEvent: (event: StreamMessageEvent) => void
+  ): Promise<void> {
     if (!this.running) {
       throw new Error('Runtime 尚未启动')
     }
@@ -62,14 +88,21 @@ export class RuntimeImpl implements Runtime {
     this.context.appendMessage(sessionId, { role: 'user', content: text })
 
     const history = this.context.getHistory(sessionId)
-    const result = await this.router.chat(history, config.llm, options)
+    const result = await this.router.streamChat(history, config.llm, options, {
+      onReasoning: (delta) => onEvent({ type: 'reasoning', text: delta }),
+      onContent: (delta) => onEvent({ type: 'content', text: delta })
+    })
 
     this.context.appendMessage(sessionId, {
       role: 'assistant',
       content: result.content,
       ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
     })
-    return result.content
+    onEvent({
+      type: 'done',
+      content: result.content,
+      ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+    })
   }
 
   async fim(input: FimInput): Promise<string> {

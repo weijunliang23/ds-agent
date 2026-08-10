@@ -18,6 +18,24 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
   } as unknown as Response
 }
 
+function streamResponse(lines: string[], ok = true, status = 200): Response {
+  const encoder = new TextEncoder()
+  return {
+    ok,
+    status,
+    text: () => Promise.resolve(ok ? '' : 'err'),
+    json: () => Promise.resolve({}),
+    body: new ReadableStream({
+      start(controller) {
+        for (const line of lines) controller.enqueue(encoder.encode(line))
+        controller.close()
+      }
+    })
+  } as unknown as Response
+}
+
+const noopHandlers = { onReasoning: () => {}, onContent: () => {} }
+
 function makeRouter(response: Response): { router: OpenAIModelRouter; fetchMock: ReturnType<typeof vi.fn<ChatFetcher>> } {
   const fetchMock = vi.fn<ChatFetcher>(() => Promise.resolve(response))
   return { router: new OpenAIModelRouter(fetchMock), fetchMock }
@@ -146,5 +164,79 @@ describe('OpenAIModelRouter', () => {
     const router = new OpenAIModelRouter(fetchMock)
     await expect(router.fim({ prompt: 'x' }, { ...settings, apiKey: '' })).rejects.toThrow(/AppKey/)
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('streamChat 解析 SSE 增量并透传 reasoning/content', async () => {
+    const lines = [
+      'data: {"choices":[{"delta":{"reasoning_content":"首先"}}]}\n',
+      '\n',
+      'data: {"choices":[{"delta":{"reasoning_content":"推理"}}]}\n',
+      '\n',
+      'data: {"choices":[{"delta":{"content":"最终"}}]}\n',
+      '\n',
+      'data: {"choices":[{"delta":{"content":"答案"}}]}\n',
+      '\n',
+      'data: [DONE]\n',
+      '\n'
+    ]
+    const { router, fetchMock } = makeRouter(streamResponse(lines))
+    const reasoningChunks: string[] = []
+    const contentChunks: string[] = []
+
+    const result = await router.streamChat([{ role: 'user', content: 'hi' }], settings, undefined, {
+      onReasoning: (delta) => reasoningChunks.push(delta),
+      onContent: (delta) => contentChunks.push(delta)
+    })
+
+    expect(reasoningChunks).toEqual(['首先', '推理'])
+    expect(contentChunks).toEqual(['最终', '答案'])
+    expect(result.content).toBe('最终答案')
+    expect(result.reasoningContent).toBe('首先推理')
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'deepseek-chat',
+      messages: [{ role: 'user', content: 'hi' }],
+      stream: true
+    })
+  })
+
+  it('streamChat 思考模式携带 thinking 与 reasoning_effort', async () => {
+    const { router, fetchMock } = makeRouter(streamResponse(['data: [DONE]\n']))
+    await router.streamChat([], settings, { thinking: 'enabled', reasoningEffort: 'max' }, noopHandlers)
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'deepseek-chat',
+      messages: [],
+      stream: true,
+      thinking: { type: 'enabled' },
+      reasoning_effort: 'max'
+    })
+  })
+
+  it('streamChat 跨 chunk 切割时仍能完整解析', async () => {
+    const first = 'data: {"choices":[{"delta":{"content":"你"}}]}\n\ndata: {"choices":[{"del'
+    const second = 'ta":{"content":"好"}}]}\n\ndata: [DONE]\n'
+    const { router } = makeRouter(streamResponse([first, second]))
+    const chunks: string[] = []
+    await router.streamChat([], settings, undefined, { onReasoning: () => {}, onContent: (d) => chunks.push(d) })
+    expect(chunks).toEqual(['你', '好'])
+  })
+
+  it('streamChat HTTP 非 2xx 抛错', async () => {
+    const { router } = makeRouter(streamResponse([''], false, 401))
+    await expect(router.streamChat([], settings, undefined, noopHandlers)).rejects.toThrow(/HTTP 401/)
+  })
+
+  it('streamChat 无 body 时抛格式错误', async () => {
+    const fake = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({})
+    } as unknown as Response
+    const fetchMock = vi.fn<ChatFetcher>(() => Promise.resolve(fake))
+    const router = new OpenAIModelRouter(fetchMock)
+    await expect(router.streamChat([], settings, undefined, noopHandlers)).rejects.toThrow(/格式异常/)
   })
 })

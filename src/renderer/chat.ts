@@ -93,6 +93,124 @@ export function initChat(options: ChatOptions): ChatController {
     updateSendState()
   }
 
+  function scrollToBottom(): void {
+    if (!messagesEl) return
+    messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+
+  interface AssistantStreamView {
+    reasoning(delta: string): void
+    content(delta: string): void
+    error(message: string): void
+    finish(): void
+  }
+
+  function createAssistantStream(isThinking: boolean): AssistantStreamView | null {
+    if (!messagesEl) return null
+
+    const el = document.createElement('div')
+    el.className = 'msg assistant'
+    messagesEl.appendChild(el)
+
+    const contentEl = document.createElement('div')
+    contentEl.className = 'msg-content'
+    el.appendChild(contentEl)
+
+    let headerEl: HTMLDivElement | null = null
+    let reasoningBody: HTMLDivElement | null = null
+    let spinnerEl: HTMLSpanElement | null = null
+    let reasoningActive = false
+    let reasoningExpanded = true
+    let contentStarted = false
+
+    if (isThinking) {
+      headerEl = document.createElement('div')
+      headerEl.className = 'reasoning-header'
+      const chevron = document.createElement('span')
+      chevron.className = 'reasoning-chevron'
+      const spinner = document.createElement('span')
+      spinner.className = 'spinner'
+      spinnerEl = spinner
+      const label = document.createElement('span')
+      label.className = 'reasoning-label'
+      label.textContent = '思考中…'
+      headerEl.append(chevron, spinner, label)
+      el.insertBefore(headerEl, contentEl)
+
+      reasoningBody = document.createElement('div')
+      reasoningBody.className = 'reasoning-body'
+      el.insertBefore(reasoningBody, contentEl)
+
+      const renderHeader = (): void => {
+        if (!headerEl) return
+        const chevronEl = headerEl.querySelector('.reasoning-chevron') as HTMLElement | null
+        const labelEl = headerEl.querySelector('.reasoning-label') as HTMLElement | null
+        if (chevronEl) chevronEl.textContent = reasoningExpanded ? '▾' : '▸'
+        if (labelEl) labelEl.textContent = reasoningActive ? '思考过程' : '思考中…'
+      }
+
+      headerEl.addEventListener('click', () => {
+        reasoningExpanded = !reasoningExpanded
+        if (reasoningBody) reasoningBody.hidden = !reasoningExpanded
+        renderHeader()
+      })
+      renderHeader()
+    }
+
+    const finishThinking = (): void => {
+      if (spinnerEl) {
+        spinnerEl.remove()
+        spinnerEl = null
+      }
+      if (!headerEl) return
+      if (reasoningActive) {
+        const labelEl = headerEl.querySelector('.reasoning-label') as HTMLElement | null
+        if (labelEl) labelEl.textContent = '思考过程'
+      } else {
+        headerEl.remove()
+        if (reasoningBody) reasoningBody.remove()
+        headerEl = null
+        reasoningBody = null
+      }
+    }
+
+    let reasoningText = ''
+    let contentText = ''
+
+    return {
+      reasoning: (delta) => {
+        reasoningActive = true
+        reasoningText += delta
+        if (reasoningBody) {
+          reasoningBody.textContent = reasoningText
+          reasoningBody.hidden = !reasoningExpanded
+        }
+        scrollToBottom()
+      },
+      content: (delta) => {
+        if (!contentStarted) {
+          contentStarted = true
+          finishThinking()
+        }
+        contentText += delta
+        contentEl.textContent = contentText
+        scrollToBottom()
+      },
+      error: (message) => {
+        if (spinnerEl) {
+          spinnerEl.remove()
+          spinnerEl = null
+        }
+        contentEl.classList.add('error')
+        contentEl.textContent = message
+        scrollToBottom()
+      },
+      finish: () => {
+        finishThinking()
+      }
+    }
+  }
+
   async function send(): Promise<void> {
     const text = inputEl?.value.trim() ?? ''
     if (!text || busy) return
@@ -100,12 +218,26 @@ export function initChat(options: ChatOptions): ChatController {
 
     appendMessage('user', text)
     setBusy(true)
+
+    const opts = chatOptions()
+    const view = createAssistantStream(opts.thinking === 'enabled')
+
     try {
-      const reply = await window.api.chat(sessionId, text, chatOptions())
-      appendMessage('assistant', reply)
+      await window.api.streamChat(sessionId, text, opts, (event) => {
+        if (!view) return
+        if (event.type === 'reasoning') {
+          view.reasoning(event.text)
+        } else if (event.type === 'content') {
+          view.content(event.text)
+        } else if (event.type === 'error') {
+          view.error(event.message)
+          appendMessage('system', '可在设置中检查模型配置后重试')
+        }
+      })
+      view?.finish()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      appendMessage('error', message)
+      view?.error(message)
       appendMessage('system', '可在设置中检查模型配置后重试')
     } finally {
       setBusy(false)
