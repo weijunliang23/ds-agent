@@ -1,6 +1,13 @@
 import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { appTitle } from './app-info'
+import { MemoryContextEngine } from './context-engine'
+import { registerIpc } from './ipc'
+import { OpenAIModelRouter } from './model-router'
+import { RuntimeImpl } from './runtime'
+import { createSettingsStore } from './settings-store'
+
+let runtime: RuntimeImpl
 
 function createWindow(): void {
   const win = new BrowserWindow({
@@ -27,8 +34,16 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(() => {
+async function bootstrap(): Promise<void> {
+  const store = createSettingsStore(join(app.getPath('userData'), 'settings'))
+  runtime = new RuntimeImpl(new OpenAIModelRouter(), new MemoryContextEngine(), store)
+  await runtime.start()
+  registerIpc(runtime, store)
   createWindow()
+}
+
+app.whenReady().then(() => {
+  void bootstrap()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

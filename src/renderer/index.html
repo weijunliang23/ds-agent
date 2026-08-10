@@ -4,9 +4,55 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>my-agent</title>
+    <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
-    <div id="app">my-agent</div>
+    <div id="app">
+      <header class="app-header">
+        <span class="app-title">my-agent</span>
+        <button id="btn-open-settings" class="btn-ghost" type="button">设置</button>
+      </header>
+
+      <main id="chat-view" class="chat-view">
+        <div id="messages" class="messages"></div>
+        <form id="chat-form" class="chat-form">
+          <textarea
+            id="input-message"
+            class="input-message"
+            rows="1"
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+          ></textarea>
+          <button id="btn-send" class="btn-primary" type="submit" disabled>发送</button>
+        </form>
+      </main>
+
+      <section id="settings-view" class="settings-view" hidden>
+        <form id="settings-form" class="settings-form">
+          <h2>模型设置</h2>
+          <label class="field">
+            <span>AppKey（模型密钥）</span>
+            <input id="set-api-key" type="password" autocomplete="off" placeholder="sk-xxx" />
+          </label>
+          <label class="field">
+            <span>API 地址</span>
+            <input id="set-base-url" type="url" autocomplete="off" placeholder="https://api.example.com/v1" />
+          </label>
+          <label class="field">
+            <span>模型名</span>
+            <input id="set-model" type="text" autocomplete="off" placeholder="deepseek-chat" />
+          </label>
+          <label class="field">
+            <span>超时（毫秒）</span>
+            <input id="set-timeout" type="number" min="1000" placeholder="60000" />
+          </label>
+          <div class="form-actions">
+            <button id="btn-save-settings" class="btn-primary" type="submit">保存</button>
+            <button id="btn-close-settings" class="btn-ghost" type="button">返回</button>
+          </div>
+          <p id="settings-status" class="status" role="status"></p>
+        </form>
+      </section>
+    </div>
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

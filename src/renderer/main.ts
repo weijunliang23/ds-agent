@@ -1,5 +1,10 @@
-const app = document.querySelector<HTMLDivElement>('#app')
+import './style.css'
+import { initChat } from './chat'
+import { initSettings } from './settings'
+import { showView } from './view'
 
-if (app) {
-  app.textContent = 'my-agent — Phase 0 工程骨架'
-}
+const chat = initChat({ onOpenSettings: () => showView('settings') })
+initSettings({ onBack: () => showView('chat') })
+showView('chat')
+
+void chat.bootstrap()
