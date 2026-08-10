@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron'
 import type { LlmSettings } from '../shared/config'
 import type { Runtime } from './runtime'
+import type { ChatOptions, FimInput } from './model-router'
 import type { SettingsStore } from '../shared/settings'
 
 export interface IpcHandler {
@@ -12,11 +13,15 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
     return runtime.createSession()
   })
 
-  ipcMain.handle('chat:message', (_event, sessionId: unknown, text: unknown) => {
+  ipcMain.handle('chat:message', (_event, sessionId: unknown, text: unknown, options: unknown) => {
     if (typeof sessionId !== 'string' || typeof text !== 'string') {
       throw new Error('参数错误：sessionId 与 text 必须为字符串')
     }
-    return runtime.handleMessage(sessionId, text)
+    return runtime.handleMessage(sessionId, text, sanitizeChatOptions(options))
+  })
+
+  ipcMain.handle('chat:fim', (_event, input: unknown) => {
+    return runtime.fim(sanitizeFimInput(input))
   })
 
   ipcMain.handle('settings:get', () => {
@@ -29,6 +34,29 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
     await runtime.reloadConfig()
     return { ok: true }
   })
+}
+
+function sanitizeChatOptions(value: unknown): ChatOptions | undefined {
+  const v = (value ?? {}) as Record<string, unknown>
+  const out: ChatOptions = {}
+  if (v.thinking === 'enabled' || v.thinking === 'disabled') {
+    out.thinking = v.thinking
+  }
+  if (v.reasoningEffort === 'low' || v.reasoningEffort === 'high' || v.reasoningEffort === 'max') {
+    out.reasoningEffort = v.reasoningEffort
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
+function sanitizeFimInput(value: unknown): FimInput {
+  const v = (value ?? {}) as Record<string, unknown>
+  const out: FimInput = { prompt: '' }
+  if (typeof v.prompt === 'string') out.prompt = v.prompt
+  if (typeof v.suffix === 'string') out.suffix = v.suffix
+  if (typeof v.maxTokens === 'number' && Number.isFinite(v.maxTokens) && v.maxTokens > 0) {
+    out.maxTokens = v.maxTokens
+  }
+  return out
 }
 
 function sanitizeSettings(value: unknown): Partial<LlmSettings> {

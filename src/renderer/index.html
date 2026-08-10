@@ -15,6 +15,24 @@
 
       <main id="chat-view" class="chat-view">
         <div id="messages" class="messages"></div>
+        <div class="chat-toolbar">
+          <label class="toolbar-item">
+            <input id="thinking-toggle" type="checkbox" checked />
+            <span>思考模式</span>
+          </label>
+          <label class="toolbar-item">
+            <span>思考强度</span>
+            <select id="reasoning-effort">
+              <option value="low">low</option>
+              <option value="high" selected>high</option>
+              <option value="max">max</option>
+            </select>
+          </label>
+          <label class="toolbar-item">
+            <input id="fim-toggle" type="checkbox" />
+            <span>FIM 补全</span>
+          </label>
+        </div>
         <form id="chat-form" class="chat-form">
           <textarea
             id="input-message"
@@ -23,6 +41,21 @@
             placeholder="输入消息，Enter 发送，Shift+Enter 换行"
           ></textarea>
           <button id="btn-send" class="btn-primary" type="submit" disabled>发送</button>
+        </form>
+        <form id="fim-form" class="fim-form" hidden>
+          <div class="fim-fields">
+            <label class="fim-field">
+              <span>前缀</span>
+              <textarea id="input-prefix" rows="3" placeholder="输入前缀，模型补全中间内容"></textarea>
+            </label>
+            <label class="fim-field">
+              <span>后缀（可选）</span>
+              <textarea id="input-suffix" rows="3" placeholder="输入后缀"></textarea>
+            </label>
+          </div>
+          <div class="fim-actions">
+            <button id="btn-fim-send" class="btn-primary" type="submit">补全</button>
+          </div>
         </form>
       </main>
 

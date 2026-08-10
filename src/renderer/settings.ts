@@ -9,7 +9,7 @@ export function initSettings(options: SettingsOptions): void {
   const modelEl = document.getElementById('set-model') as HTMLInputElement | null
   const timeoutEl = document.getElementById('set-timeout') as HTMLInputElement | null
   const statusEl = document.getElementById('settings-status')
-  const saveBtn = document.getElementById('btn-save-settings')
+  const saveBtn = document.getElementById('btn-save-settings') as HTMLButtonElement | null
   const backBtn = document.getElementById('btn-close-settings')
 
   backBtn?.addEventListener('click', () => {

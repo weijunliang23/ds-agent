@@ -10,7 +10,8 @@ function makeRuntime(overrides?: {
 }) {
   const store = new MemorySettingsStore(overrides?.settings ?? {})
   const router: ModelRouter = {
-    chat: vi.fn().mockResolvedValue({ content: '助手回复' })
+    chat: vi.fn().mockResolvedValue({ content: '助手回复' }),
+    fim: vi.fn().mockResolvedValue({ content: '补全结果' })
   }
   const runtime = new RuntimeImpl(router, new MemoryContextEngine(), store, overrides?.env ?? {})
   return { runtime, store, router }
@@ -68,6 +69,37 @@ describe('RuntimeImpl', () => {
     const config = runtime.getConfig()
     expect(config.llm.apiKey).toBe('ui-key')
     expect(config.llm.baseUrl).toBe('ui-url')
+  })
+
+  it('handleMessage 透传思考模式 options', async () => {
+    const { runtime, router } = makeRuntime({
+      settings: { apiKey: 'k', baseUrl: 'u' }
+    })
+    await runtime.start()
+    const sid = runtime.createSession()
+
+    await runtime.handleMessage(sid, 'hi', { thinking: 'enabled', reasoningEffort: 'max' })
+    const args = vi.mocked(router.chat).mock.calls[0] as unknown[]
+    expect(args[2]).toEqual({ thinking: 'enabled', reasoningEffort: 'max' })
+  })
+
+  it('fim 调用模型补全并返回内容', async () => {
+    const { runtime, router } = makeRuntime({
+      settings: { apiKey: 'k', baseUrl: 'u' }
+    })
+    await runtime.start()
+
+    const reply = await runtime.fim({ prompt: 'def fib(a):', suffix: '  return', maxTokens: 128 })
+    expect(reply).toBe('补全结果')
+    expect(vi.mocked(router.fim).mock.calls[0]).toEqual([
+      { prompt: 'def fib(a):', suffix: '  return', maxTokens: 128 },
+      expect.objectContaining({ apiKey: 'k', baseUrl: 'u' })
+    ])
+  })
+
+  it('未启动时 fim 抛错', async () => {
+    const { runtime } = makeRuntime()
+    await expect(runtime.fim({ prompt: 'x' })).rejects.toThrow(/未启动/)
   })
 
   it('reloadConfig 后新设置生效', async () => {
