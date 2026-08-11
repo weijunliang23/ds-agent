@@ -15,6 +15,14 @@ export type StreamEvent =
   | { streamId: string; type: 'done'; content: string; reasoningContent?: string }
   | { streamId: string; type: 'stopped'; content?: string; reasoningContent?: string }
   | { streamId: string; type: 'error'; message: string }
+  | { streamId: string; type: 'tool:start'; name: string; arguments?: string }
+  | { streamId: string; type: 'tool:done'; name: string; ok: boolean; content: string }
+
+export interface ToolPermissionRequest {
+  permissionId: string
+  action: 'read' | 'write'
+  path: string
+}
 
 export interface StreamChatController {
   done: Promise<void>
@@ -57,6 +65,8 @@ export interface RendererApi {
   fim: (input: FimInput) => Promise<string>
   getSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean }>
+  onPermissionRequest: (callback: (req: ToolPermissionRequest) => void) => void
+  respondPermission: (permissionId: string, answer: 'allow' | 'deny') => Promise<{ ok: boolean }>
 }
 
 declare global {

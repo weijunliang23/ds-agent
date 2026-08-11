@@ -96,6 +96,27 @@
             <span>超时（毫秒）</span>
             <input id="set-timeout" type="number" min="1000" placeholder="60000" />
           </label>
+          <h2>工具设置</h2>
+          <label class="field">
+            <span>工作区目录（允许读写的根目录，绝对路径；留空则每次询问）</span>
+            <input id="set-workspace" type="text" autocomplete="off" placeholder="如 D:\work" />
+          </label>
+          <label class="field">
+            <span>读取文件策略</span>
+            <select id="set-read-policy">
+              <option value="ask" selected>每次询问</option>
+              <option value="allow">允许</option>
+              <option value="deny">禁止</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>写入文件策略</span>
+            <select id="set-write-policy">
+              <option value="ask" selected>每次询问</option>
+              <option value="allow">允许</option>
+              <option value="deny">禁止</option>
+            </select>
+          </label>
           <div class="form-actions">
             <button id="btn-save-settings" class="btn-primary" type="submit">保存</button>
             <button id="btn-close-settings" class="btn-ghost" type="button">返回</button>
@@ -113,6 +134,18 @@
         <div class="modal-actions">
           <button id="confirm-cancel" class="btn-ghost" type="button">取消</button>
           <button id="confirm-ok" class="btn-danger" type="button">确定删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="permission-modal" class="modal" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <h3 class="modal-title">工具权限请求</h3>
+        <p id="permission-message" class="modal-message"></p>
+        <div class="modal-actions">
+          <button id="permission-deny" class="btn-ghost" type="button">拒绝</button>
+          <button id="permission-allow" class="btn-primary" type="button">允许</button>
         </div>
       </div>
     </div>

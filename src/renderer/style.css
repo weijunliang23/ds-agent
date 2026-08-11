@@ -507,6 +507,20 @@ body {
   border-color: var(--accent);
 }
 
+.field select {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+}
+
+.field select:focus {
+  border-color: var(--accent);
+}
+
 .form-actions {
   display: flex;
   gap: 10px;
@@ -747,6 +761,52 @@ body {
   font-size: 14px;
   line-height: 1.6;
   word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.modal-title {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.tool-card {
+  align-self: flex-start;
+  max-width: 78%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--panel);
+}
+
+.tool-card.running {
+  border-color: var(--accent);
+}
+
+.tool-card.failed {
+  border-color: var(--danger);
+}
+
+.tool-card-title {
+  color: var(--text-dim);
+}
+
+.tool-card-detail {
+  margin-top: 6px;
+  color: var(--text);
+  background: var(--panel-2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.tool-card.failed .tool-card-detail {
+  color: var(--danger);
 }
 
 .modal-actions {

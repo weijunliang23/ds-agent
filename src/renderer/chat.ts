@@ -32,6 +32,7 @@ export function initChat(options: ChatOptions): ChatController {
   let currentId = ''
   let busy = false
   let currentStream: { cancel: () => void } | null = null
+  let currentToolEl: HTMLElement | null = null
 
   const sidebar: SidebarController = initSidebar({
     onSwitch: (id) => switchTo(id),
@@ -132,6 +133,36 @@ export function initChat(options: ChatOptions): ChatController {
   function scrollToBottom(): void {
     if (!messagesEl) return
     messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+
+  function createToolCard(title: string, state: 'running' | 'done' | 'failed'): HTMLElement | null {
+    if (!messagesEl) return null
+    const el = document.createElement('div')
+    el.className = `tool-card ${state}`
+    const titleEl = document.createElement('div')
+    titleEl.className = 'tool-card-title'
+    titleEl.textContent = title
+    el.appendChild(titleEl)
+    messagesEl.appendChild(el)
+    scrollToBottom()
+    return el
+  }
+
+  function finishToolCard(name: string, ok: boolean, content: string): void {
+    if (!currentToolEl) return
+    currentToolEl.classList.remove('running')
+    currentToolEl.classList.toggle('failed', !ok)
+    const titleEl = currentToolEl.querySelector('.tool-card-title') as HTMLElement | null
+    if (titleEl) {
+      titleEl.textContent = `工具 ${name}：${ok ? '完成' : '失败'}`
+    }
+    if (content !== '') {
+      const detail = document.createElement('div')
+      detail.className = 'tool-card-detail'
+      detail.textContent = content.length > 300 ? `${content.slice(0, 300)}…` : content
+      currentToolEl.appendChild(detail)
+    }
+    currentToolEl = null
   }
 
   function appendStoredAssistant(message: StoredMessage): void {
@@ -354,16 +385,24 @@ export function initChat(options: ChatOptions): ChatController {
         view.reasoning(event.text)
       } else if (event.type === 'content') {
         view.content(event.text)
+      } else if (event.type === 'done') {
+        if (event.content !== '') view.content(event.content)
+        view.finish()
       } else if (event.type === 'stopped') {
         view.finish()
         appendMessage('system', '已停止生成')
       } else if (event.type === 'error') {
         view.error(event.message)
         appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
+      } else if (event.type === 'tool:start') {
+        currentToolEl = createToolCard(`调用工具 ${event.name}…`, 'running')
+      } else if (event.type === 'tool:done') {
+        finishToolCard(event.name, event.ok, event.content)
       }
     })
     currentStream = stream
     if (stopBtn) stopBtn.hidden = false
+    currentToolEl = null
 
     try {
       await stream.done

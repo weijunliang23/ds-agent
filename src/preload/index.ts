@@ -17,6 +17,14 @@ export type StreamEvent =
   | { streamId: string; type: 'done'; content: string; reasoningContent?: string }
   | { streamId: string; type: 'stopped'; content?: string; reasoningContent?: string }
   | { streamId: string; type: 'error'; message: string }
+  | { streamId: string; type: 'tool:start'; name: string; arguments?: string }
+  | { streamId: string; type: 'tool:done'; name: string; ok: boolean; content: string }
+
+export interface ToolPermissionRequest {
+  permissionId: string
+  action: 'read' | 'write'
+  path: string
+}
 
 export interface StreamChatController {
   done: Promise<void>
@@ -59,6 +67,8 @@ export interface RendererApi {
   fim: (input: FimInput) => Promise<string>
   getSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean }>
+  onPermissionRequest: (callback: (req: ToolPermissionRequest) => void) => void
+  respondPermission: (permissionId: string, answer: 'allow' | 'deny') => Promise<{ ok: boolean }>
 }
 
 const api: RendererApi = {
@@ -88,7 +98,14 @@ const api: RendererApi = {
   },
   fim: (input) => ipcRenderer.invoke('chat:fim', input),
   getSettings: () => ipcRenderer.invoke('settings:get'),
-  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings)
+  saveSettings: (settings) => ipcRenderer.invoke('settings:save', settings),
+  onPermissionRequest: (callback) => {
+    ipcRenderer.on('tool:permission-request', (_event, req: ToolPermissionRequest) => {
+      callback(req)
+    })
+  },
+  respondPermission: (permissionId, answer) =>
+    ipcRenderer.invoke('tool:permission-respond', permissionId, answer)
 }
 
 contextBridge.exposeInMainWorld('api', api)
