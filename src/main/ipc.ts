@@ -9,6 +9,8 @@ export interface IpcHandler {
 }
 
 export function registerIpc(runtime: Runtime, store: SettingsStore): void {
+  const activeStreams = new Map<string, AbortController>()
+
   ipcMain.handle('chat:create-session', () => {
     return runtime.createSession()
   })
@@ -49,16 +51,34 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
 
   ipcMain.handle('chat:stream:start', async (event, streamId: unknown, sessionId: unknown, text: unknown, options: unknown) => {
     const sender = event.sender
+    const controller = new AbortController()
+    if (typeof streamId === 'string') {
+      activeStreams.set(streamId, controller)
+    }
     try {
       if (typeof streamId !== 'string' || typeof sessionId !== 'string' || typeof text !== 'string') {
         throw new Error('参数错误：streamId、sessionId 与 text 必须为字符串')
       }
       await runtime.streamMessage(sessionId, text, sanitizeChatOptions(options), (ev) => {
         sender.send('chat:stream', { streamId, ...ev })
-      })
+      }, controller.signal)
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      sender.send('chat:stream', { streamId, type: 'error', message })
+      if (controller.signal.aborted) {
+        sender.send('chat:stream', { streamId, type: 'stopped' })
+      } else {
+        const message = err instanceof Error ? err.message : String(err)
+        sender.send('chat:stream', { streamId, type: 'error', message })
+      }
+    } finally {
+      if (typeof streamId === 'string') {
+        activeStreams.delete(streamId)
+      }
+    }
+  })
+
+  ipcMain.on('chat:stream:cancel', (_event, streamId: unknown) => {
+    if (typeof streamId === 'string') {
+      activeStreams.get(streamId)?.abort()
     }
   })
 

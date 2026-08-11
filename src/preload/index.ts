@@ -15,7 +15,13 @@ export type StreamEvent =
   | { streamId: string; type: 'reasoning'; text: string }
   | { streamId: string; type: 'content'; text: string }
   | { streamId: string; type: 'done'; content: string; reasoningContent?: string }
+  | { streamId: string; type: 'stopped'; content?: string; reasoningContent?: string }
   | { streamId: string; type: 'error'; message: string }
+
+export interface StreamChatController {
+  done: Promise<void>
+  cancel: () => void
+}
 
 export interface ConversationMessage {
   role: string
@@ -49,7 +55,7 @@ export interface RendererApi {
     message: string,
     options: ChatOptions | undefined,
     onEvent: (event: StreamEvent) => void
-  ) => Promise<void>
+  ) => StreamChatController
   fim: (input: FimInput) => Promise<string>
   getSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean }>
@@ -69,12 +75,16 @@ const api: RendererApi = {
     const listener = (_event: Electron.IpcRendererEvent, payload: StreamEvent): void => {
       if (payload.streamId !== streamId) return
       onEvent(payload)
-      if (payload.type === 'done' || payload.type === 'error') {
+      if (payload.type === 'done' || payload.type === 'stopped' || payload.type === 'error') {
         ipcRenderer.removeListener(channel, listener)
       }
     }
     ipcRenderer.on(channel, listener)
-    return ipcRenderer.invoke('chat:stream:start', streamId, sessionId, message, options)
+    const done = ipcRenderer.invoke('chat:stream:start', streamId, sessionId, message, options)
+    return {
+      done,
+      cancel: () => ipcRenderer.send('chat:stream:cancel', streamId)
+    }
   },
   fim: (input) => ipcRenderer.invoke('chat:fim', input),
   getSettings: () => ipcRenderer.invoke('settings:get'),

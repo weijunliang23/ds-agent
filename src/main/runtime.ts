@@ -14,6 +14,7 @@ export type StreamMessageEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'content'; text: string }
   | { type: 'done'; content: string; reasoningContent?: string }
+  | { type: 'stopped'; content: string; reasoningContent?: string }
 
 export interface Runtime {
   start(): Promise<void>
@@ -30,7 +31,8 @@ export interface Runtime {
     sessionId: string,
     text: string,
     options: ChatOptions | undefined,
-    onEvent: (event: StreamMessageEvent) => void
+    onEvent: (event: StreamMessageEvent) => void,
+    signal?: AbortSignal
   ): Promise<void>
   fim(input: FimInput): Promise<string>
 }
@@ -116,7 +118,8 @@ export class RuntimeImpl implements Runtime {
     sessionId: string,
     text: string,
     options: ChatOptions | undefined,
-    onEvent: (event: StreamMessageEvent) => void
+    onEvent: (event: StreamMessageEvent) => void,
+    signal?: AbortSignal
   ): Promise<void> {
     if (!this.running) {
       throw new Error('Runtime 尚未启动')
@@ -129,22 +132,51 @@ export class RuntimeImpl implements Runtime {
     this.context.appendMessage(sessionId, { role: 'user', content: text })
 
     const history = this.context.getHistory(sessionId)
-    const result = await this.router.streamChat(history, config.llm, options, {
-      onReasoning: (delta) => onEvent({ type: 'reasoning', text: delta }),
-      onContent: (delta) => onEvent({ type: 'content', text: delta })
-    })
+    let partialContent = ''
+    let partialReasoning = ''
 
-    this.context.appendMessage(sessionId, {
-      role: 'assistant',
-      content: result.content,
-      ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
-    })
-    await this.persistConversation(sessionId, text)
-    onEvent({
-      type: 'done',
-      content: result.content,
-      ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
-    })
+    try {
+      const result = await this.router.streamChat(history, config.llm, options, {
+        onReasoning: (delta) => {
+          partialReasoning += delta
+          onEvent({ type: 'reasoning', text: delta })
+        },
+        onContent: (delta) => {
+          partialContent += delta
+          onEvent({ type: 'content', text: delta })
+        }
+      }, signal)
+
+      this.context.appendMessage(sessionId, {
+        role: 'assistant',
+        content: result.content,
+        ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+      })
+      await this.persistConversation(sessionId, text)
+      onEvent({
+        type: 'done',
+        content: result.content,
+        ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+      })
+    } catch (err) {
+      if (signal?.aborted) {
+        if (partialContent !== '' || partialReasoning !== '') {
+          this.context.appendMessage(sessionId, {
+            role: 'assistant',
+            content: partialContent,
+            ...(partialReasoning !== '' ? { reasoningContent: partialReasoning } : {})
+          })
+          await this.persistConversation(sessionId, text)
+        }
+        onEvent({
+          type: 'stopped',
+          content: partialContent,
+          ...(partialReasoning !== '' ? { reasoningContent: partialReasoning } : {})
+        })
+        return
+      }
+      throw err
+    }
   }
 
   private async persistConversation(sessionId: string, firstUserText: string): Promise<void> {

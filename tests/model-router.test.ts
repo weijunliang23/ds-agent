@@ -239,4 +239,21 @@ describe('OpenAIModelRouter', () => {
     const router = new OpenAIModelRouter(fetchMock)
     await expect(router.streamChat([], settings, undefined, noopHandlers)).rejects.toThrow(/格式异常/)
   })
+
+  it('streamChat 外部 signal 中止时抛错', async () => {
+    const controller = new AbortController()
+    const fetchMock = vi.fn<ChatFetcher>(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+    )
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const promise = router.streamChat([], settings, undefined, noopHandlers, controller.signal)
+    controller.abort()
+    await expect(promise).rejects.toThrow(/abort/i)
+  })
 })

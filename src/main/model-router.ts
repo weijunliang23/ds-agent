@@ -46,7 +46,8 @@ export interface ModelRouter {
     messages: ChatMessage[],
     settings: LlmSettings,
     options: ChatOptions | undefined,
-    handlers: StreamHandlers
+    handlers: StreamHandlers,
+    signal?: AbortSignal
   ): Promise<ChatCompletionResult>
   fim(input: FimInput, settings: LlmSettings): Promise<ChatCompletionResult>
 }
@@ -70,10 +71,15 @@ export class OpenAIModelRouter implements ModelRouter {
   private async request(
     url: string,
     settings: LlmSettings,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    externalSignal?: AbortSignal
   ): Promise<Response> {
     let res: Response
     try {
+      const timeoutSignal = AbortSignal.timeout(settings.timeoutMs)
+      const signal = externalSignal
+        ? AbortSignal.any([externalSignal, timeoutSignal])
+        : timeoutSignal
       res = await this.fetchImpl(url, {
         method: 'POST',
         headers: {
@@ -81,7 +87,7 @@ export class OpenAIModelRouter implements ModelRouter {
           Authorization: `Bearer ${settings.apiKey}`
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(settings.timeoutMs)
+        signal
       })
     } catch (err) {
       const wrapped = new Error(
@@ -144,7 +150,8 @@ export class OpenAIModelRouter implements ModelRouter {
     messages: ChatMessage[],
     settings: LlmSettings,
     options: ChatOptions | undefined,
-    handlers: StreamHandlers
+    handlers: StreamHandlers,
+    signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
     this.assertConfigured(settings)
 
@@ -163,7 +170,8 @@ export class OpenAIModelRouter implements ModelRouter {
     const res = await this.request(
       this.buildUrl(settings.baseUrl, '/chat/completions'),
       settings,
-      body
+      body,
+      signal
     )
     if (!res.body) {
       throw new Error('模型返回格式异常：响应不支持流式读取')

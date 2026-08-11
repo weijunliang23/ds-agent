@@ -209,6 +209,36 @@ describe('RuntimeImpl', () => {
     ).toEqual(['问', '答案', '再问'])
   })
 
+  it('streamMessage 被中止时发出 stopped 并持久化部分内容', async () => {
+    const { runtime, router, conversations } = makeRuntime({
+      settings: { apiKey: 'k', baseUrl: 'u' }
+    })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    const controller = new AbortController()
+    vi.mocked(router.streamChat).mockImplementation(
+      (_m, _s, _o, handlers, signal) =>
+        new Promise((_resolve, reject) => {
+          handlers.onContent('部分回答')
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        })
+    )
+
+    const events: string[] = []
+    const promise = runtime.streamMessage(sid, '问', undefined, (event) => {
+      events.push(event.type)
+    }, controller.signal)
+    controller.abort()
+    await promise
+
+    expect(events).toEqual(['content', 'stopped'])
+    const conv = await conversations.store.get(sid)
+    expect(conv?.messages.map((m) => m.content)).toEqual(['问', '部分回答'])
+  })
+
   it('fim 调用模型补全并返回内容', async () => {
     const { runtime, router } = makeRuntime({
       settings: { apiKey: 'k', baseUrl: 'u' }

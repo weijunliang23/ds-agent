@@ -27,9 +27,11 @@ export function initChat(options: ChatOptions): ChatController {
   const fimForm = document.getElementById('fim-form') as HTMLFormElement | null
   const prefixEl = document.getElementById('input-prefix') as HTMLTextAreaElement | null
   const suffixEl = document.getElementById('input-suffix') as HTMLTextAreaElement | null
+  const stopBtn = document.getElementById('btn-stop') as HTMLButtonElement | null
 
   let currentId = ''
   let busy = false
+  let currentStream: { cancel: () => void } | null = null
 
   const sidebar: SidebarController = initSidebar({
     onSwitch: (id) => switchTo(id),
@@ -65,6 +67,10 @@ export function initChat(options: ChatOptions): ChatController {
     updateSendState()
   })
 
+  stopBtn?.addEventListener('click', () => {
+    currentStream?.cancel()
+  })
+
   fimToggle?.addEventListener('change', () => {
     const on = fimToggle.checked
     if (formEl) formEl.hidden = on
@@ -98,6 +104,22 @@ export function initChat(options: ChatOptions): ChatController {
     const el = document.createElement('div')
     el.className = `msg ${role}`
     el.textContent = content
+    messagesEl.appendChild(el)
+    messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+
+  function appendActionMessage(content: string, actionText: string, onClick: () => void): void {
+    if (!messagesEl) return
+    const el = document.createElement('div')
+    el.className = 'msg system'
+    const text = document.createElement('span')
+    text.textContent = content
+    const action = document.createElement('button')
+    action.className = 'msg-action'
+    action.type = 'button'
+    action.textContent = actionText
+    action.addEventListener('click', onClick)
+    el.append(text, action)
     messagesEl.appendChild(el)
     messagesEl.scrollTop = messagesEl.scrollHeight
   }
@@ -326,24 +348,33 @@ export function initChat(options: ChatOptions): ChatController {
     const opts = chatOptions()
     const view = createAssistantStream(opts.thinking === 'enabled')
 
+    const stream = window.api.streamChat(currentId, text, opts, (event) => {
+      if (!view) return
+      if (event.type === 'reasoning') {
+        view.reasoning(event.text)
+      } else if (event.type === 'content') {
+        view.content(event.text)
+      } else if (event.type === 'stopped') {
+        view.finish()
+        appendMessage('system', '已停止生成')
+      } else if (event.type === 'error') {
+        view.error(event.message)
+        appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
+      }
+    })
+    currentStream = stream
+    if (stopBtn) stopBtn.hidden = false
+
     try {
-      await window.api.streamChat(currentId, text, opts, (event) => {
-        if (!view) return
-        if (event.type === 'reasoning') {
-          view.reasoning(event.text)
-        } else if (event.type === 'content') {
-          view.content(event.text)
-        } else if (event.type === 'error') {
-          view.error(event.message)
-          appendMessage('system', '可在设置中检查模型配置后重试')
-        }
-      })
+      await stream.done
       view?.finish()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       view?.error(message)
-      appendMessage('system', '可在设置中检查模型配置后重试')
+      appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
     } finally {
+      currentStream = null
+      if (stopBtn) stopBtn.hidden = true
       setBusy(false)
       resizeInput()
       inputEl?.focus()
@@ -363,7 +394,7 @@ export function initChat(options: ChatOptions): ChatController {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       appendMessage('error', message)
-      appendMessage('system', '可在设置中检查模型配置后重试')
+      appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
     } finally {
       setBusy(false)
     }

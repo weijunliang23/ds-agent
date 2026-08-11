@@ -13,7 +13,13 @@ export type StreamEvent =
   | { streamId: string; type: 'reasoning'; text: string }
   | { streamId: string; type: 'content'; text: string }
   | { streamId: string; type: 'done'; content: string; reasoningContent?: string }
+  | { streamId: string; type: 'stopped'; content?: string; reasoningContent?: string }
   | { streamId: string; type: 'error'; message: string }
+
+export interface StreamChatController {
+  done: Promise<void>
+  cancel: () => void
+}
 
 export interface ConversationMessage {
   role: string
@@ -47,7 +53,7 @@ export interface RendererApi {
     message: string,
     options: ChatOptions | undefined,
     onEvent: (event: StreamEvent) => void
-  ) => Promise<void>
+  ) => StreamChatController
   fim: (input: FimInput) => Promise<string>
   getSettings: () => Promise<Record<string, unknown>>
   saveSettings: (settings: Record<string, unknown>) => Promise<{ ok: boolean }>
