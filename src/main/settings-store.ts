@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { LlmSettings } from '../shared/config'
+import type { StoredSettings } from '../shared/config'
 import type { SettingsStore } from '../shared/settings'
 
 export class FileSettingsStore implements SettingsStore {
@@ -10,22 +10,37 @@ export class FileSettingsStore implements SettingsStore {
     return join(this.dir, 'settings.json')
   }
 
-  async load(): Promise<Partial<LlmSettings>> {
+  async load(): Promise<StoredSettings> {
     try {
       const raw = await readFile(this.filePath(), 'utf-8')
-      const parsed = JSON.parse(raw) as { llm?: Partial<LlmSettings> }
-      return parsed.llm ?? {}
+      const parsed = JSON.parse(raw) as { llm?: unknown; tools?: unknown }
+      return {
+        llm: isRecord(parsed.llm) ? parsed.llm : {},
+        tools: isRecord(parsed.tools) ? parsed.tools : {}
+      }
     } catch {
       return {}
     }
   }
 
-  async save(settings: Partial<LlmSettings>): Promise<void> {
+  async save(settings: StoredSettings): Promise<void> {
     await mkdir(this.dir, { recursive: true })
     const tmpPath = join(this.dir, `settings.${Date.now()}.tmp`)
-    await writeFile(tmpPath, JSON.stringify({ llm: settings }, null, 2), 'utf-8')
+    await writeFile(
+      tmpPath,
+      JSON.stringify(
+        { llm: settings.llm ?? {}, tools: settings.tools ?? {} },
+        null,
+        2
+      ),
+      'utf-8'
+    )
     await rename(tmpPath, this.filePath())
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 export function createSettingsStore(dir: string): SettingsStore {

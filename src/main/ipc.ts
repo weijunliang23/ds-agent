@@ -1,12 +1,16 @@
-import { ipcMain } from 'electron'
-import type { LlmSettings } from '../shared/config'
+import { ipcMain, type BrowserWindow } from 'electron'
+import type { LlmSettings, StoredSettings, ToolSettings } from '../shared/config'
 import type { Runtime } from './runtime'
 import type { ChatOptions, FimInput } from './model-router'
 import type { SettingsStore } from '../shared/settings'
+import type { PermissionRequest } from '../shared/tools'
+import type { PermissionRequester } from './tools/permissions'
 
 export interface IpcHandler {
   (channel: string, listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown): void
 }
+
+const pendingPermissions = new Map<string, (answer: 'allow' | 'deny') => void>()
 
 export function registerIpc(runtime: Runtime, store: SettingsStore): void {
   const activeStreams = new Map<string, AbortController>()
@@ -98,6 +102,46 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
   })
 }
 
+export function registerPermissionResponder(): void {
+  ipcMain.handle('tool:permission-respond', (_event, id: unknown, answer: unknown) => {
+    const key = typeof id === 'string' ? id : ''
+    const resolver = pendingPermissions.get(key)
+    if (resolver) {
+      pendingPermissions.delete(key)
+      resolver(answer === 'allow' ? 'allow' : 'deny')
+    }
+    return { ok: true }
+  })
+}
+
+export class IpcPermissionRequester implements PermissionRequester {
+  constructor(private readonly getWindow: () => BrowserWindow | null) {}
+
+  request(req: PermissionRequest): Promise<'allow' | 'deny'> {
+    return new Promise<'allow' | 'deny'>((resolve) => {
+      const win = this.getWindow()
+      if (!win || win.isDestroyed()) {
+        resolve('deny')
+        return
+      }
+      const id = crypto.randomUUID()
+      const timer = setTimeout(() => {
+        pendingPermissions.delete(id)
+        resolve('deny')
+      }, 30000)
+      pendingPermissions.set(id, (answer) => {
+        clearTimeout(timer)
+        resolve(answer)
+      })
+      win.webContents.send('tool:permission-request', {
+        permissionId: id,
+        action: req.action,
+        path: req.path
+      })
+    })
+  }
+}
+
 function sanitizeChatOptions(value: unknown): ChatOptions | undefined {
   const v = (value ?? {}) as Record<string, unknown>
   const out: ChatOptions = {}
@@ -121,14 +165,33 @@ function sanitizeFimInput(value: unknown): FimInput {
   return out
 }
 
-function sanitizeSettings(value: unknown): Partial<LlmSettings> {
+function sanitizeSettings(value: unknown): StoredSettings {
   const v = (value ?? {}) as Record<string, unknown>
-  const out: Partial<LlmSettings> = {}
-  if (typeof v.apiKey === 'string') out.apiKey = v.apiKey
-  if (typeof v.baseUrl === 'string') out.baseUrl = v.baseUrl
-  if (typeof v.model === 'string') out.model = v.model
-  if (typeof v.timeoutMs === 'number' && Number.isFinite(v.timeoutMs) && v.timeoutMs > 0) {
-    out.timeoutMs = v.timeoutMs
+  const llmRaw = (v.llm ?? {}) as Record<string, unknown>
+  const toolsRaw = (v.tools ?? {}) as Record<string, unknown>
+
+  const llm: Partial<LlmSettings> = {}
+  if (typeof llmRaw.apiKey === 'string') llm.apiKey = llmRaw.apiKey
+  if (typeof llmRaw.baseUrl === 'string') llm.baseUrl = llmRaw.baseUrl
+  if (typeof llmRaw.model === 'string') llm.model = llmRaw.model
+  if (typeof llmRaw.timeoutMs === 'number' && Number.isFinite(llmRaw.timeoutMs) && llmRaw.timeoutMs > 0) {
+    llm.timeoutMs = llmRaw.timeoutMs
   }
+
+  const tools: Partial<ToolSettings> = {}
+  if (typeof toolsRaw.workspace === 'string') tools.workspace = toolsRaw.workspace
+  if (toolsRaw.readPolicy === 'allow' || toolsRaw.readPolicy === 'deny' || toolsRaw.readPolicy === 'ask') {
+    tools.readPolicy = toolsRaw.readPolicy
+  }
+  if (toolsRaw.writePolicy === 'allow' || toolsRaw.writePolicy === 'deny' || toolsRaw.writePolicy === 'ask') {
+    tools.writePolicy = toolsRaw.writePolicy
+  }
+  if (typeof toolsRaw.maxIterations === 'number' && Number.isFinite(toolsRaw.maxIterations) && toolsRaw.maxIterations >= 1) {
+    tools.maxIterations = toolsRaw.maxIterations
+  }
+
+  const out: StoredSettings = {}
+  if (Object.keys(llm).length > 0) out.llm = llm
+  if (Object.keys(tools).length > 0) out.tools = tools
   return out
 }

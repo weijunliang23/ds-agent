@@ -38,7 +38,7 @@ function makeConversationStore() {
 }
 
 function makeRuntime(overrides?: {
-  settings?: Record<string, unknown>
+  settings?: { llm?: Record<string, unknown>; tools?: Record<string, unknown> }
   env?: Record<string, string>
 }) {
   const store = new MemorySettingsStore(overrides?.settings ?? {})
@@ -63,7 +63,7 @@ function makeRuntime(overrides?: {
 
 describe('RuntimeImpl', () => {
   it('start 后 createSession 返回会话 id 并持久化空对话', async () => {
-    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    const { runtime, conversations } = makeRuntime({ settings: { llm: { apiKey: 'k', baseUrl: 'u' } } })
     await runtime.start()
     const id = await runtime.createSession()
     expect(id).toBeTypeOf('string')
@@ -87,7 +87,7 @@ describe('RuntimeImpl', () => {
 
   it('配置齐全时完整走通一轮对话并保存上下文', async () => {
     const { runtime, router } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' } }
     })
     await runtime.start()
     const sid = await runtime.createSession()
@@ -109,7 +109,7 @@ describe('RuntimeImpl', () => {
   })
 
   it('streamMessage 结束后持久化对话并自动生成标题', async () => {
-    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    const { runtime, conversations } = makeRuntime({ settings: { llm: { apiKey: 'k', baseUrl: 'u' } } })
     await runtime.start()
     const sid = await runtime.createSession()
 
@@ -121,7 +121,7 @@ describe('RuntimeImpl', () => {
 
   it('loadConversation 读取历史并作为后续上下文', async () => {
     const { runtime, router, conversations } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'u' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
     await runtime.start()
 
@@ -140,13 +140,13 @@ describe('RuntimeImpl', () => {
   })
 
   it('loadConversation 不存在的 id 返回 null', async () => {
-    const { runtime } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    const { runtime } = makeRuntime({ settings: { llm: { apiKey: 'k', baseUrl: 'u' } } })
     await runtime.start()
     expect(await runtime.loadConversation('missing')).toBeNull()
   })
 
   it('deleteConversation / deleteConversations 从存储移除', async () => {
-    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    const { runtime, conversations } = makeRuntime({ settings: { llm: { apiKey: 'k', baseUrl: 'u' } } })
     await runtime.start()
     const a = await runtime.createSession()
     const b = await runtime.createSession()
@@ -161,7 +161,7 @@ describe('RuntimeImpl', () => {
 
   it('settings 与 env 合并，设置值优先', async () => {
     const { runtime } = makeRuntime({
-      settings: { apiKey: 'ui-key', baseUrl: 'ui-url' },
+      settings: { llm: { apiKey: 'ui-key', baseUrl: 'ui-url' } },
       env: { LLM_API_KEY: 'env-key' }
     })
     await runtime.start()
@@ -172,7 +172,7 @@ describe('RuntimeImpl', () => {
 
   it('handleMessage 透传思考模式 options', async () => {
     const { runtime, router } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'u' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
     await runtime.start()
     const sid = await runtime.createSession()
@@ -184,7 +184,7 @@ describe('RuntimeImpl', () => {
 
   it('streamMessage 透传 reasoning/content 事件并保存上下文', async () => {
     const { runtime, router } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'u' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
     await runtime.start()
     const sid = await runtime.createSession()
@@ -211,7 +211,7 @@ describe('RuntimeImpl', () => {
 
   it('streamMessage 被中止时发出 stopped 并持久化部分内容', async () => {
     const { runtime, router, conversations } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'u' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
     await runtime.start()
     const sid = await runtime.createSession()
@@ -241,7 +241,7 @@ describe('RuntimeImpl', () => {
 
   it('fim 调用模型补全并返回内容', async () => {
     const { runtime, router } = makeRuntime({
-      settings: { apiKey: 'k', baseUrl: 'u' }
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
     await runtime.start()
 
@@ -259,11 +259,11 @@ describe('RuntimeImpl', () => {
   })
 
   it('reloadConfig 后新设置生效', async () => {
-    const { runtime, store } = makeRuntime({ settings: { apiKey: 'old', baseUrl: 'old-url' } })
+    const { runtime, store } = makeRuntime({       settings: { llm: { apiKey: 'old', baseUrl: 'old-url' } } })
     await runtime.start()
     expect(runtime.getConfig().llm.apiKey).toBe('old')
 
-    await store.save({ apiKey: 'new', baseUrl: 'new-url' })
+    await store.save({ llm: { apiKey: 'new', baseUrl: 'new-url' } })
     await runtime.reloadConfig()
     expect(runtime.getConfig().llm.apiKey).toBe('new')
   })

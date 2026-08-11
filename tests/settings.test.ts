@@ -8,17 +8,26 @@ import { FileSettingsStore } from '../src/main/settings-store'
 describe('MemorySettingsStore', () => {
   it('保存后可读取', async () => {
     const store = new MemorySettingsStore()
-    await store.save({ apiKey: 'k', baseUrl: 'u', model: 'm', timeoutMs: 1000 })
+    await store.save({
+      llm: { apiKey: 'k', baseUrl: 'u', model: 'm', timeoutMs: 1000 },
+      tools: { workspace: 'D:/work', readPolicy: 'allow', writePolicy: 'deny', maxIterations: 12 }
+    })
     const loaded = await store.load()
-    expect(loaded).toEqual({ apiKey: 'k', baseUrl: 'u', model: 'm', timeoutMs: 1000 })
+    expect(loaded.llm).toEqual({ apiKey: 'k', baseUrl: 'u', model: 'm', timeoutMs: 1000 })
+    expect(loaded.tools).toEqual({
+      workspace: 'D:/work',
+      readPolicy: 'allow',
+      writePolicy: 'deny',
+      maxIterations: 12
+    })
   })
 
   it('初始值可读且不被污染', async () => {
-    const store = new MemorySettingsStore({ apiKey: 'init' })
-    await store.save({ model: 'm' })
+    const store = new MemorySettingsStore({ llm: { apiKey: 'init' } })
+    await store.save({ llm: { model: 'm' } })
     const loaded = await store.load()
-    expect(loaded.apiKey).toBeUndefined()
-    expect(loaded.model).toBe('m')
+    expect(loaded.llm?.apiKey).toBeUndefined()
+    expect(loaded.llm?.model).toBe('m')
   })
 })
 
@@ -36,13 +45,17 @@ describe('FileSettingsStore', () => {
   })
 
   it('保存后写入 settings.json 且可读回', async () => {
-    await store.save({ apiKey: 'sk-test', baseUrl: 'https://api.example.com/v1', model: 'deepseek-chat' })
+    await store.save({
+      llm: { apiKey: 'sk-test', baseUrl: 'https://api.example.com/v1', model: 'deepseek-chat' },
+      tools: { workspace: 'D:/work', writePolicy: 'deny' }
+    })
     const loaded = await store.load()
-    expect(loaded).toEqual({
+    expect(loaded.llm).toEqual({
       apiKey: 'sk-test',
       baseUrl: 'https://api.example.com/v1',
       model: 'deepseek-chat'
     })
+    expect(loaded.tools).toEqual({ workspace: 'D:/work', writePolicy: 'deny' })
 
     const raw = await readFile(join(dir, 'settings.json'), 'utf-8')
     const parsed = JSON.parse(raw) as { llm?: Record<string, unknown> }
@@ -50,11 +63,11 @@ describe('FileSettingsStore', () => {
   })
 
   it('覆盖写入不会残留旧值', async () => {
-    await store.save({ apiKey: 'a' })
-    await store.save({ apiKey: 'b', model: 'm' })
+    await store.save({ llm: { apiKey: 'a' } })
+    await store.save({ llm: { apiKey: 'b', model: 'm' } })
     const loaded = await store.load()
-    expect(loaded.apiKey).toBe('b')
-    expect(loaded.model).toBe('m')
+    expect(loaded.llm?.apiKey).toBe('b')
+    expect(loaded.llm?.model).toBe('m')
   })
 
   it('损坏的 JSON 返回空配置而非抛错', async () => {
