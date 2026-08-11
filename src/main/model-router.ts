@@ -1,14 +1,32 @@
 import type { LlmSettings } from '../shared/config'
 
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: string
+}
+
+export interface ToolDefinition {
+  type: 'function'
+  function: {
+    name: string
+    description: string
+    parameters: Record<string, unknown>
+  }
+}
+
 export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system'
+  role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   reasoningContent?: string
+  toolCalls?: ToolCall[]
+  toolCallId?: string
 }
 
 export interface ChatCompletionResult {
   content: string
   reasoningContent?: string
+  toolCalls?: ToolCall[]
 }
 
 export type ThinkingMode = 'enabled' | 'disabled'
@@ -40,7 +58,9 @@ export interface ModelRouter {
   chat(
     messages: ChatMessage[],
     settings: LlmSettings,
-    options?: ChatOptions
+    options?: ChatOptions,
+    tools?: ToolDefinition[],
+    signal?: AbortSignal
   ): Promise<ChatCompletionResult>
   streamChat(
     messages: ChatMessage[],
@@ -50,6 +70,46 @@ export interface ModelRouter {
     signal?: AbortSignal
   ): Promise<ChatCompletionResult>
   fim(input: FimInput, settings: LlmSettings): Promise<ChatCompletionResult>
+}
+
+function toApiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
+  return messages.map((message) => {
+    const out: Record<string, unknown> = {
+      role: message.role,
+      content: message.content
+    }
+    if (message.reasoningContent && message.reasoningContent !== '') {
+      out['reasoning_content'] = message.reasoningContent
+    }
+    if (message.toolCalls && message.toolCalls.length > 0) {
+      out['tool_calls'] = message.toolCalls.map((call) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments }
+      }))
+    }
+    if (message.toolCallId) {
+      out['tool_call_id'] = message.toolCallId
+    }
+    return out
+  })
+}
+
+function parseToolCalls(value: unknown): ToolCall[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const calls: ToolCall[] = []
+  for (const item of value) {
+    if (item === null || typeof item !== 'object') continue
+    const call = item as Record<string, unknown>
+    const fn = (call.function ?? {}) as Record<string, unknown>
+    const name = typeof fn.name === 'string' ? fn.name : ''
+    const args = typeof fn.arguments === 'string' ? fn.arguments : ''
+    if (name === '') continue
+    calls.push({ id: typeof call.id === 'string' ? call.id : '', name, arguments: args })
+  }
+  return calls.length > 0 ? calls : undefined
 }
 
 export class OpenAIModelRouter implements ModelRouter {
@@ -109,13 +169,18 @@ export class OpenAIModelRouter implements ModelRouter {
   async chat(
     messages: ChatMessage[],
     settings: LlmSettings,
-    options?: ChatOptions
+    options?: ChatOptions,
+    tools?: ToolDefinition[],
+    signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
     this.assertConfigured(settings)
 
     const body: Record<string, unknown> = {
       model: settings.model,
-      messages
+      messages: toApiMessages(messages)
+    }
+    if (tools && tools.length > 0) {
+      body['tools'] = tools
     }
     if (options?.thinking) {
       body['thinking'] = { type: options.thinking }
@@ -127,14 +192,16 @@ export class OpenAIModelRouter implements ModelRouter {
     const res = await this.request(
       this.buildUrl(settings.baseUrl, '/chat/completions'),
       settings,
-      body
+      body,
+      signal
     )
     const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }>
+      choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown; tool_calls?: unknown } }>
     }
     const message = data.choices?.[0]?.message
-    const content = message?.content
-    if (typeof content !== 'string') {
+    const content = typeof message?.content === 'string' ? message.content : ''
+    const toolCalls = parseToolCalls(message?.tool_calls)
+    if (content === '' && !toolCalls) {
       throw new Error('模型返回格式异常：缺少 choices[0].message.content')
     }
     const reasoningContent = message?.reasoning_content
@@ -142,7 +209,8 @@ export class OpenAIModelRouter implements ModelRouter {
       content,
       ...(typeof reasoningContent === 'string' && reasoningContent !== ''
         ? { reasoningContent }
-        : {})
+        : {}),
+      ...(toolCalls ? { toolCalls } : {})
     }
   }
 
@@ -157,7 +225,7 @@ export class OpenAIModelRouter implements ModelRouter {
 
     const body: Record<string, unknown> = {
       model: settings.model,
-      messages,
+      messages: toApiMessages(messages),
       stream: true
     }
     if (options?.thinking) {

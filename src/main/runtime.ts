@@ -2,6 +2,7 @@ import { isConfigured, loadConfig, type AppConfig, type EnvLike } from '../share
 import type { SettingsStore } from '../shared/settings'
 import type { ContextEngine } from './context-engine'
 import type { ChatOptions, FimInput, ModelRouter } from './model-router'
+import type { ToolExecutor } from './tools/executor'
 import {
   createConversation,
   DEFAULT_WORKSPACE_ID,
@@ -14,7 +15,10 @@ export type StreamMessageEvent =
   | { type: 'reasoning'; text: string }
   | { type: 'content'; text: string }
   | { type: 'done'; content: string; reasoningContent?: string }
-  | { type: 'stopped'; content: string; reasoningContent?: string }
+  | { type: 'stopped'; content?: string; reasoningContent?: string }
+  | { type: 'error'; message: string }
+  | { type: 'tool:start'; name: string; arguments?: string }
+  | { type: 'tool:done'; name: string; ok: boolean; content: string }
 
 export interface Runtime {
   start(): Promise<void>
@@ -46,7 +50,8 @@ export class RuntimeImpl implements Runtime {
     private readonly context: ContextEngine,
     private readonly store: SettingsStore,
     private readonly conversations: ConversationStore,
-    private readonly env: EnvLike = process.env
+    private readonly env: EnvLike = process.env,
+    private readonly tools: ToolExecutor | null = null
   ) {}
 
   async start(): Promise<void> {
@@ -109,6 +114,8 @@ export class RuntimeImpl implements Runtime {
     await this.streamMessage(sessionId, text, options, (event) => {
       if (event.type === 'content') {
         content += event.text
+      } else if (event.type === 'done') {
+        content = event.content
       }
     })
     return content
@@ -130,6 +137,12 @@ export class RuntimeImpl implements Runtime {
     }
 
     this.context.appendMessage(sessionId, { role: 'user', content: text })
+
+    const tools = this.tools?.listToolDefinitions() ?? []
+    if (tools.length > 0) {
+      await this.streamWithTools(sessionId, text, config, options, tools, onEvent, signal)
+      return
+    }
 
     const history = this.context.getHistory(sessionId)
     let partialContent = ''
@@ -179,6 +192,79 @@ export class RuntimeImpl implements Runtime {
     }
   }
 
+  private async streamWithTools(
+    sessionId: string,
+    firstUserText: string,
+    config: AppConfig,
+    options: ChatOptions | undefined,
+    definitions: ReturnType<NonNullable<ToolExecutor>['listToolDefinitions']>,
+    onEvent: (event: StreamMessageEvent) => void,
+    signal?: AbortSignal
+  ): Promise<void> {
+    const maxIterations = config.tools.maxIterations
+    let history = this.context.getHistory(sessionId)
+
+    try {
+      for (let i = 0; i < maxIterations; i++) {
+        if (signal?.aborted) {
+          await this.persistConversation(sessionId, firstUserText)
+          onEvent({ type: 'stopped' })
+          return
+        }
+
+        const result = await this.router.chat(history, config.llm, options, definitions, signal)
+
+        if (result.toolCalls && result.toolCalls.length > 0) {
+          this.context.appendMessage(sessionId, {
+            role: 'assistant',
+            content: result.content,
+            ...(result.toolCalls.length > 0 ? { toolCalls: result.toolCalls } : {}),
+            ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+          })
+          for (const call of result.toolCalls) {
+            onEvent({ type: 'tool:start', name: call.name, arguments: call.arguments })
+            const executed = await this.tools!.execute(call.name, parseToolArguments(call.arguments))
+            onEvent({
+              type: 'tool:done',
+              name: call.name,
+              ok: executed.ok,
+              content: executed.content
+            })
+            this.context.appendMessage(sessionId, {
+              role: 'tool',
+              content: executed.content,
+              toolCallId: call.id
+            })
+          }
+          history = this.context.getHistory(sessionId)
+          continue
+        }
+
+        this.context.appendMessage(sessionId, {
+          role: 'assistant',
+          content: result.content,
+          ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+        })
+        await this.persistConversation(sessionId, firstUserText)
+        onEvent({
+          type: 'done',
+          content: result.content,
+          ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
+        })
+        return
+      }
+
+      onEvent({ type: 'error', message: `工具调用超过最大迭代次数（${maxIterations}），已停止` })
+    } catch (err) {
+      if (signal?.aborted) {
+        await this.persistConversation(sessionId, firstUserText)
+        onEvent({ type: 'stopped' })
+        return
+      }
+      throw err
+    }
+  }
+
   private async persistConversation(sessionId: string, firstUserText: string): Promise<void> {
     const session = this.context.getSession(sessionId)
     if (!session) {
@@ -208,5 +294,17 @@ export class RuntimeImpl implements Runtime {
 
     const result = await this.router.fim(input, config.llm)
     return result.content
+  }
+}
+
+function parseToolArguments(raw: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>
+    }
+    return {}
+  } catch {
+    return {}
   }
 }
