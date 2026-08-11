@@ -2,6 +2,13 @@ import { isConfigured, loadConfig, type AppConfig, type EnvLike } from '../share
 import type { SettingsStore } from '../shared/settings'
 import type { ContextEngine } from './context-engine'
 import type { ChatOptions, FimInput, ModelRouter } from './model-router'
+import {
+  createConversation,
+  DEFAULT_WORKSPACE_ID,
+  type Conversation,
+  type ConversationStore,
+  type ConversationSummary
+} from './conversation-store'
 
 export type StreamMessageEvent =
   | { type: 'reasoning'; text: string }
@@ -11,9 +18,13 @@ export type StreamMessageEvent =
 export interface Runtime {
   start(): Promise<void>
   stop(): Promise<void>
-  createSession(): string
+  createSession(): Promise<string>
   getConfig(): AppConfig
   reloadConfig(): Promise<void>
+  listConversations(): Promise<ConversationSummary[]>
+  loadConversation(id: string): Promise<Conversation | null>
+  deleteConversation(id: string): Promise<void>
+  deleteConversations(ids: string[]): Promise<void>
   handleMessage(sessionId: string, text: string, options?: ChatOptions): Promise<string>
   streamMessage(
     sessionId: string,
@@ -32,6 +43,7 @@ export class RuntimeImpl implements Runtime {
     private readonly router: ModelRouter,
     private readonly context: ContextEngine,
     private readonly store: SettingsStore,
+    private readonly conversations: ConversationStore,
     private readonly env: EnvLike = process.env
   ) {}
 
@@ -45,8 +57,12 @@ export class RuntimeImpl implements Runtime {
     return Promise.resolve()
   }
 
-  createSession(): string {
-    return this.context.createSession().id
+  async createSession(): Promise<string> {
+    const id = crypto.randomUUID()
+    const conversation = createConversation(id, DEFAULT_WORKSPACE_ID)
+    await this.conversations.save(conversation)
+    this.context.restoreSession(id, [], conversation.createdAt)
+    return id
   }
 
   getConfig(): AppConfig {
@@ -59,6 +75,31 @@ export class RuntimeImpl implements Runtime {
   async reloadConfig(): Promise<void> {
     const settings = await this.store.load()
     this.config = loadConfig({ settings, env: this.env })
+  }
+
+  async listConversations(): Promise<ConversationSummary[]> {
+    return this.conversations.list()
+  }
+
+  async loadConversation(id: string): Promise<Conversation | null> {
+    const conversation = await this.conversations.get(id)
+    if (!conversation) {
+      return null
+    }
+    this.context.restoreSession(conversation.id, conversation.messages, conversation.createdAt)
+    return conversation
+  }
+
+  async deleteConversation(id: string): Promise<void> {
+    await this.conversations.delete(id)
+    this.context.removeSession(id)
+  }
+
+  async deleteConversations(ids: string[]): Promise<void> {
+    await this.conversations.deleteMany(ids)
+    for (const id of ids) {
+      this.context.removeSession(id)
+    }
   }
 
   async handleMessage(sessionId: string, text: string, options?: ChatOptions): Promise<string> {
@@ -98,11 +139,30 @@ export class RuntimeImpl implements Runtime {
       content: result.content,
       ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
     })
+    await this.persistConversation(sessionId, text)
     onEvent({
       type: 'done',
       content: result.content,
       ...(result.reasoningContent ? { reasoningContent: result.reasoningContent } : {})
     })
+  }
+
+  private async persistConversation(sessionId: string, firstUserText: string): Promise<void> {
+    const session = this.context.getSession(sessionId)
+    if (!session) {
+      return
+    }
+    const existing = await this.conversations.get(sessionId)
+    const fallbackTitle = firstUserText.trim() !== '' ? firstUserText.trim().slice(0, 20) : '新对话'
+    const conversation: Conversation = {
+      id: session.id,
+      workspaceId: existing?.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      title: existing?.title && existing.title !== '新对话' ? existing.title : fallbackTitle,
+      createdAt: existing?.createdAt ?? session.createdAt,
+      updatedAt: Date.now(),
+      messages: session.messages
+    }
+    await this.conversations.save(conversation)
   }
 
   async fim(input: FimInput): Promise<string> {

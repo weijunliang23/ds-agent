@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { join } from 'node:path'
 import { appTitle } from './app-info'
 import { MemoryContextEngine } from './context-engine'
+import { createConversationStore } from './conversation-store'
 import { registerIpc } from './ipc'
 import { OpenAIModelRouter } from './model-router'
 import { RuntimeImpl } from './runtime'
@@ -36,7 +37,15 @@ function createWindow(): void {
 
 async function bootstrap(): Promise<void> {
   const store = createSettingsStore(join(app.getPath('userData'), 'settings'))
-  runtime = new RuntimeImpl(new OpenAIModelRouter(), new MemoryContextEngine(), store)
+  const conversations = createConversationStore(
+    join(app.getPath('userData'), 'workspaces', 'default', 'conversations')
+  )
+  runtime = new RuntimeImpl(
+    new OpenAIModelRouter(),
+    new MemoryContextEngine(),
+    store,
+    conversations
+  )
   await runtime.start()
   registerIpc(runtime, store)
   createWindow()

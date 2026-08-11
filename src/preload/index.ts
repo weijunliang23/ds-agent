@@ -17,9 +17,32 @@ export type StreamEvent =
   | { streamId: string; type: 'done'; content: string; reasoningContent?: string }
   | { streamId: string; type: 'error'; message: string }
 
+export interface ConversationMessage {
+  role: string
+  content: string
+  reasoningContent?: string
+}
+
+export interface ConversationSummary {
+  id: string
+  workspaceId: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+}
+
+export interface Conversation extends ConversationSummary {
+  messages: ConversationMessage[]
+}
+
 export interface RendererApi {
   version: () => string
   createSession: () => Promise<string>
+  listConversations: () => Promise<ConversationSummary[]>
+  loadConversation: (id: string) => Promise<Conversation | null>
+  deleteConversation: (id: string) => Promise<{ ok: boolean }>
+  deleteConversations: (ids: string[]) => Promise<{ ok: boolean }>
   chat: (sessionId: string, message: string, options?: ChatOptions) => Promise<string>
   streamChat: (
     sessionId: string,
@@ -35,6 +58,10 @@ export interface RendererApi {
 const api: RendererApi = {
   version: () => process.env['npm_package_version'] ?? '0.1.0',
   createSession: () => ipcRenderer.invoke('chat:create-session'),
+  listConversations: () => ipcRenderer.invoke('chat:list-conversations'),
+  loadConversation: (id) => ipcRenderer.invoke('chat:load-conversation', id),
+  deleteConversation: (id) => ipcRenderer.invoke('chat:delete-conversation', id),
+  deleteConversations: (ids) => ipcRenderer.invoke('chat:delete-conversations', ids),
   chat: (sessionId, message, options) => ipcRenderer.invoke('chat:message', sessionId, message, options),
   streamChat: (sessionId, message, options, onEvent) => {
     const streamId = crypto.randomUUID()

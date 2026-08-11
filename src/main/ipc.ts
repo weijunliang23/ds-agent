@@ -13,6 +13,33 @@ export function registerIpc(runtime: Runtime, store: SettingsStore): void {
     return runtime.createSession()
   })
 
+  ipcMain.handle('chat:list-conversations', () => {
+    return runtime.listConversations()
+  })
+
+  ipcMain.handle('chat:load-conversation', (_event, id: unknown) => {
+    if (typeof id !== 'string') {
+      throw new Error('参数错误：id 必须为字符串')
+    }
+    return runtime.loadConversation(id)
+  })
+
+  ipcMain.handle('chat:delete-conversation', async (_event, id: unknown) => {
+    if (typeof id !== 'string') {
+      throw new Error('参数错误：id 必须为字符串')
+    }
+    await runtime.deleteConversation(id)
+    return { ok: true }
+  })
+
+  ipcMain.handle('chat:delete-conversations', async (_event, ids: unknown) => {
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+      throw new Error('参数错误：ids 必须为字符串数组')
+    }
+    await runtime.deleteConversations(ids as string[])
+    return { ok: true }
+  })
+
   ipcMain.handle('chat:message', (_event, sessionId: unknown, text: unknown, options: unknown) => {
     if (typeof sessionId !== 'string' || typeof text !== 'string') {
       throw new Error('参数错误：sessionId 与 text 必须为字符串')

@@ -3,6 +3,39 @@ import { MemoryContextEngine } from '../src/main/context-engine'
 import { RuntimeImpl } from '../src/main/runtime'
 import type { ModelRouter } from '../src/main/model-router'
 import { MemorySettingsStore } from '../src/shared/settings'
+import {
+  createConversation,
+  type Conversation,
+  type ConversationStore
+} from '../src/main/conversation-store'
+
+function makeConversationStore() {
+  const data = new Map<string, Conversation>()
+  const store: ConversationStore = {
+    list: async () =>
+      [...data.values()]
+        .map((c) => ({
+          id: c.id,
+          workspaceId: c.workspaceId,
+          title: c.title,
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+          messageCount: c.messages.length
+        }))
+        .sort((a, b) => b.updatedAt - a.updatedAt),
+    get: async (id) => data.get(id) ?? null,
+    save: async (c) => {
+      data.set(c.id, { ...c, messages: [...c.messages] })
+    },
+    delete: async (id) => {
+      data.delete(id)
+    },
+    deleteMany: async (ids) => {
+      ids.forEach((id) => data.delete(id))
+    }
+  }
+  return { store, data }
+}
 
 function makeRuntime(overrides?: {
   settings?: Record<string, unknown>
@@ -17,15 +50,26 @@ function makeRuntime(overrides?: {
     }),
     fim: vi.fn().mockResolvedValue({ content: '补全结果' })
   }
-  const runtime = new RuntimeImpl(router, new MemoryContextEngine(), store, overrides?.env ?? {})
-  return { runtime, store, router }
+  const conversations = makeConversationStore()
+  const runtime = new RuntimeImpl(
+    router,
+    new MemoryContextEngine(),
+    store,
+    conversations.store,
+    overrides?.env ?? {}
+  )
+  return { runtime, store, router, conversations }
 }
 
 describe('RuntimeImpl', () => {
-  it('start 后 createSession 返回会话 id', async () => {
-    const { runtime } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+  it('start 后 createSession 返回会话 id 并持久化空对话', async () => {
+    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
     await runtime.start()
-    expect(runtime.createSession()).toBeTypeOf('string')
+    const id = await runtime.createSession()
+    expect(id).toBeTypeOf('string')
+    const conv = await conversations.store.get(id)
+    expect(conv?.messages).toEqual([])
+    expect(conv?.title).toBe('新对话')
   })
 
   it('未启动时 handleMessage 抛错', async () => {
@@ -36,7 +80,7 @@ describe('RuntimeImpl', () => {
   it('未配置模型时抛出可读错误且不调用模型', async () => {
     const { runtime, router } = makeRuntime({ settings: {} })
     await runtime.start()
-    const sid = runtime.createSession()
+    const sid = await runtime.createSession()
     await expect(runtime.handleMessage(sid, 'hi')).rejects.toThrow(/未配置模型/)
     expect(router.streamChat).not.toHaveBeenCalled()
   })
@@ -46,7 +90,7 @@ describe('RuntimeImpl', () => {
       settings: { apiKey: 'k', baseUrl: 'https://api.example.com/v1', model: 'm' }
     })
     await runtime.start()
-    const sid = runtime.createSession()
+    const sid = await runtime.createSession()
 
     const reply = await runtime.handleMessage(sid, '你好')
     expect(reply).toBe('助手回复')
@@ -62,6 +106,57 @@ describe('RuntimeImpl', () => {
       (secondCall[0] as Array<{ role: string; content: string }>).map((m) => m.content)
     ).toEqual(['你好', '助手回复', '还记得刚才吗'])
     expect(reply2).toBe('助手回复')
+  })
+
+  it('streamMessage 结束后持久化对话并自动生成标题', async () => {
+    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    await runtime.streamMessage(sid, '你好世界', undefined, () => {})
+    const conv = await conversations.store.get(sid)
+    expect(conv?.title).toBe('你好世界')
+    expect(conv?.messages.map((m) => m.content)).toEqual(['你好世界', '助手回复'])
+  })
+
+  it('loadConversation 读取历史并作为后续上下文', async () => {
+    const { runtime, router, conversations } = makeRuntime({
+      settings: { apiKey: 'k', baseUrl: 'u' }
+    })
+    await runtime.start()
+
+    const old = createConversation('old')
+    old.messages = [{ role: 'user', content: '旧消息' }]
+    await conversations.store.save(old)
+
+    const loaded = await runtime.loadConversation('old')
+    expect(loaded?.messages.map((m) => m.content)).toEqual(['旧消息'])
+
+    await runtime.streamMessage('old', '新问题', undefined, () => {})
+    const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
+    expect(
+      (args[0] as Array<{ role: string; content: string }>).map((m) => m.content)
+    ).toEqual(['旧消息', '新问题'])
+  })
+
+  it('loadConversation 不存在的 id 返回 null', async () => {
+    const { runtime } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    await runtime.start()
+    expect(await runtime.loadConversation('missing')).toBeNull()
+  })
+
+  it('deleteConversation / deleteConversations 从存储移除', async () => {
+    const { runtime, conversations } = makeRuntime({ settings: { apiKey: 'k', baseUrl: 'u' } })
+    await runtime.start()
+    const a = await runtime.createSession()
+    const b = await runtime.createSession()
+
+    await runtime.deleteConversation(a)
+    expect(await conversations.store.get(a)).toBeNull()
+    expect(await conversations.store.get(b)).not.toBeNull()
+
+    await runtime.deleteConversations([b, 'ghost'])
+    expect(await conversations.store.get(b)).toBeNull()
   })
 
   it('settings 与 env 合并，设置值优先', async () => {
@@ -80,7 +175,7 @@ describe('RuntimeImpl', () => {
       settings: { apiKey: 'k', baseUrl: 'u' }
     })
     await runtime.start()
-    const sid = runtime.createSession()
+    const sid = await runtime.createSession()
 
     await runtime.handleMessage(sid, 'hi', { thinking: 'enabled', reasoningEffort: 'max' })
     const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
@@ -92,7 +187,7 @@ describe('RuntimeImpl', () => {
       settings: { apiKey: 'k', baseUrl: 'u' }
     })
     await runtime.start()
-    const sid = runtime.createSession()
+    const sid = await runtime.createSession()
 
     vi.mocked(router.streamChat).mockImplementation((_m, _s, _o, handlers) => {
       handlers.onReasoning('先想')

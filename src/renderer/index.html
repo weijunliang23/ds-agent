@@ -13,7 +13,24 @@
         <button id="btn-open-settings" class="btn-ghost" type="button">设置</button>
       </header>
 
-      <main id="chat-view" class="chat-view">
+      <div class="app-body">
+        <aside id="sidebar" class="sidebar">
+          <div class="sidebar-header">
+            <span class="sidebar-title">对话记录</span>
+            <button id="btn-new-chat" class="btn-icon" type="button" title="新建对话">＋</button>
+            <button id="btn-batch-mode" class="btn-icon" type="button" title="批量删除">☑</button>
+            <button id="btn-hide-sidebar" class="btn-icon" type="button" title="隐藏侧栏">◀</button>
+          </div>
+          <div id="conversation-list" class="conversation-list"></div>
+          <div id="batch-bar" class="batch-bar" hidden>
+            <span id="batch-count" class="batch-count">已选 0 项</span>
+            <button id="btn-batch-delete" class="btn-danger" type="button" disabled>删除</button>
+            <button id="btn-batch-cancel" class="btn-ghost" type="button">取消</button>
+          </div>
+        </aside>
+        <button id="btn-show-sidebar" class="floating-btn" type="button" title="展开侧栏" hidden>☰</button>
+
+        <main id="chat-view" class="chat-view">
         <div id="messages" class="messages"></div>
         <div class="chat-toolbar">
           <label class="toolbar-item">
@@ -85,7 +102,20 @@
           <p id="settings-status" class="status" role="status"></p>
         </form>
       </section>
+      </div>
     </div>
+
+    <div id="confirm-modal" class="modal" hidden>
+      <div class="modal-backdrop"></div>
+      <div class="modal-card">
+        <p id="confirm-message" class="modal-message"></p>
+        <div class="modal-actions">
+          <button id="confirm-cancel" class="btn-ghost" type="button">取消</button>
+          <button id="confirm-ok" class="btn-danger" type="button">确定删除</button>
+        </div>
+      </div>
+    </div>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

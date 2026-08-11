@@ -1,9 +1,18 @@
+import { renderMarkdown } from './markdown'
+import { initSidebar, type SidebarController } from './sidebar'
+
 export interface ChatController {
   bootstrap(): Promise<void>
 }
 
 interface ChatOptions {
   onOpenSettings: () => void
+}
+
+interface StoredMessage {
+  role: string
+  content: string
+  reasoningContent?: string
 }
 
 export function initChat(options: ChatOptions): ChatController {
@@ -19,8 +28,14 @@ export function initChat(options: ChatOptions): ChatController {
   const prefixEl = document.getElementById('input-prefix') as HTMLTextAreaElement | null
   const suffixEl = document.getElementById('input-suffix') as HTMLTextAreaElement | null
 
-  let sessionId = ''
+  let currentId = ''
   let busy = false
+
+  const sidebar: SidebarController = initSidebar({
+    onSwitch: (id) => switchTo(id),
+    onNew: () => createNew(),
+    onDeleted: (ids) => handleDeleted(ids)
+  })
 
   settingsBtn?.addEventListener('click', () => {
     if (!busy) {
@@ -87,15 +102,104 @@ export function initChat(options: ChatOptions): ChatController {
     messagesEl.scrollTop = messagesEl.scrollHeight
   }
 
-  function setBusy(value: boolean): void {
-    busy = value
-    if (inputEl) inputEl.disabled = value
-    updateSendState()
+  function clearMessages(): void {
+    if (!messagesEl) return
+    messagesEl.textContent = ''
   }
 
   function scrollToBottom(): void {
     if (!messagesEl) return
     messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+
+  function appendStoredAssistant(message: StoredMessage): void {
+    if (!messagesEl) return
+    const el = document.createElement('div')
+    el.className = 'msg assistant'
+
+    const contentEl = document.createElement('div')
+    contentEl.className = 'msg-content'
+    contentEl.innerHTML = renderMarkdown(message.content)
+    el.appendChild(contentEl)
+
+    if (message.reasoningContent) {
+      const header = document.createElement('div')
+      header.className = 'reasoning-header'
+      const chevron = document.createElement('span')
+      chevron.className = 'reasoning-chevron'
+      chevron.textContent = '▸'
+      const label = document.createElement('span')
+      label.className = 'reasoning-label'
+      label.textContent = '思考过程'
+      header.append(chevron, label)
+
+      const body = document.createElement('div')
+      body.className = 'reasoning-body'
+      body.hidden = true
+      body.textContent = message.reasoningContent
+
+      el.insertBefore(header, contentEl)
+      el.insertBefore(body, contentEl)
+
+      let expanded = false
+      header.addEventListener('click', () => {
+        expanded = !expanded
+        body.hidden = !expanded
+        chevron.textContent = expanded ? '▾' : '▸'
+      })
+    }
+
+    messagesEl.appendChild(el)
+    scrollToBottom()
+  }
+
+  function renderHistory(messages: StoredMessage[]): void {
+    clearMessages()
+    for (const message of messages) {
+      if (message.role === 'user') {
+        appendMessage('user', message.content)
+      } else if (message.role === 'assistant') {
+        appendStoredAssistant(message)
+      }
+    }
+  }
+
+  async function createNew(): Promise<void> {
+    if (busy) return
+    currentId = await window.api.createSession()
+    renderHistory([])
+    sidebar.setActive(currentId)
+    await sidebar.refresh(currentId)
+    appendMessage('system', '新对话已创建')
+    inputEl?.focus()
+  }
+
+  async function switchTo(id: string): Promise<void> {
+    if (busy || id === currentId) return
+    const conversation = await window.api.loadConversation(id)
+    if (!conversation) return
+    currentId = conversation.id
+    renderHistory(conversation.messages)
+    sidebar.setActive(currentId)
+    await sidebar.refresh(currentId)
+    inputEl?.focus()
+  }
+
+  async function handleDeleted(ids: string[]): Promise<void> {
+    await sidebar.refresh(null)
+    if (!ids.includes(currentId)) return
+    const list = await window.api.listConversations()
+    if (list.length > 0) {
+      await switchTo(list[0].id)
+    } else {
+      await createNew()
+    }
+  }
+
+  function setBusy(value: boolean): void {
+    busy = value
+    if (inputEl) inputEl.disabled = value
+    updateSendState()
   }
 
   interface AssistantStreamView {
@@ -193,7 +297,7 @@ export function initChat(options: ChatOptions): ChatController {
           finishThinking()
         }
         contentText += delta
-        contentEl.textContent = contentText
+        contentEl.innerHTML = renderMarkdown(contentText)
         scrollToBottom()
       },
       error: (message) => {
@@ -213,7 +317,7 @@ export function initChat(options: ChatOptions): ChatController {
 
   async function send(): Promise<void> {
     const text = inputEl?.value.trim() ?? ''
-    if (!text || busy) return
+    if (!text || busy || currentId === '') return
     if (inputEl) inputEl.value = ''
 
     appendMessage('user', text)
@@ -223,7 +327,7 @@ export function initChat(options: ChatOptions): ChatController {
     const view = createAssistantStream(opts.thinking === 'enabled')
 
     try {
-      await window.api.streamChat(sessionId, text, opts, (event) => {
+      await window.api.streamChat(currentId, text, opts, (event) => {
         if (!view) return
         if (event.type === 'reasoning') {
           view.reasoning(event.text)
@@ -243,6 +347,7 @@ export function initChat(options: ChatOptions): ChatController {
       setBusy(false)
       resizeInput()
       inputEl?.focus()
+      void sidebar.refresh(currentId)
     }
   }
 
@@ -265,8 +370,12 @@ export function initChat(options: ChatOptions): ChatController {
   }
 
   async function bootstrap(): Promise<void> {
-    sessionId = await window.api.createSession()
-    appendMessage('system', '会话已就绪')
+    const list = await window.api.listConversations()
+    if (list.length > 0) {
+      await switchTo(list[0].id)
+    } else {
+      await createNew()
+    }
     inputEl?.focus()
   }
 

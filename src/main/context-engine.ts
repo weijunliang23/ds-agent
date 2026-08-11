@@ -8,6 +8,9 @@ export interface Session {
 
 export interface ContextEngine {
   createSession(): Session
+  restoreSession(id: string, messages: ChatMessage[], createdAt: number): Session
+  getSession(sessionId: string): Session | null
+  removeSession(sessionId: string): void
   appendMessage(sessionId: string, message: ChatMessage): void
   getHistory(sessionId: string): ChatMessage[]
 }
@@ -23,6 +26,24 @@ export class MemoryContextEngine implements ContextEngine {
     }
     this.sessions.set(session.id, session)
     return session
+  }
+
+  restoreSession(id: string, messages: ChatMessage[], createdAt: number): Session {
+    const session: Session = {
+      id,
+      messages: messages.map((m) => ({ ...m })),
+      createdAt
+    }
+    this.sessions.set(session.id, session)
+    return session
+  }
+
+  getSession(sessionId: string): Session | null {
+    return this.sessions.get(sessionId) ?? null
+  }
+
+  removeSession(sessionId: string): void {
+    this.sessions.delete(sessionId)
   }
 
   appendMessage(sessionId: string, message: ChatMessage): void {
