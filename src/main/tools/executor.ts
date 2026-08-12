@@ -47,10 +47,10 @@ export class ToolExecutor {
 
     if (tool.permission) {
       const raw = validated.value[tool.permission.pathArg]
-      if (typeof raw !== 'string' || raw === '') {
-        return { name, ok: false, content: '权限校验失败：路径参数缺失或非法' }
-      }
-      const path = ctx.resolvePath(raw)
+      // A missing/empty pathArg falls back to the workspace root. read_file and
+      // write_file never reach here because their path is required by the
+      // schema; only optional-path tools (e.g. list_dir) hit this branch.
+      const path = typeof raw === 'string' && raw !== '' ? ctx.resolvePath(raw) : workspace
       const decision = await this.permissions.authorize({
         action: tool.permission.action,
         path

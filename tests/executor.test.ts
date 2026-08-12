@@ -103,6 +103,48 @@ describe('ToolExecutor.execute', () => {
   })
 })
 
+describe('ToolExecutor pathArg 兜底', () => {
+  function makePeekExecutor(policies: { readPolicy: 'allow' | 'deny'; requester?: { request: () => Promise<'allow' | 'deny'> } | null }) {
+    const registry = new ToolRegistry()
+    registry.register({
+      name: 'peek_dir',
+      description: '列目录',
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+      permission: { action: 'read', pathArg: 'path' },
+      execute: async (args, c) => {
+        const p = (c as { resolvePath(p: string): string }).resolvePath(
+          typeof args.path === 'string' ? args.path : ''
+        )
+        return { ok: true, content: `peek ${p}` }
+      }
+    })
+    const executor = new ToolExecutor(
+      registry,
+      new Permissions(
+        () => ({ workspace, readPolicy: policies.readPolicy, writePolicy: 'ask' }),
+        policies.requester ?? null
+      ),
+      () => workspace
+    )
+    return executor
+  }
+
+  it('pathArg 缺失时授权路径落到工作区根目录（deny 时拒绝该路径）', async () => {
+    const executor = makePeekExecutor({ readPolicy: 'deny' })
+    const result = await executor.execute('peek_dir', {})
+    expect(result.ok).toBe(false)
+    expect(result.content).toContain('无权限执行 read')
+    expect(result.content).toContain(workspace)
+  })
+
+  it('pathArg 缺失且策略允许时执行使用工作区根目录', async () => {
+    const executor = makePeekExecutor({ readPolicy: 'allow' })
+    const result = await executor.execute('peek_dir', {})
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain(workspace)
+  })
+})
+
 describe('ToolExecutor.listToolDefinitions', () => {
   it('映射为 OpenAI function 定义', () => {
     const { executor, tool } = makeExecutor()

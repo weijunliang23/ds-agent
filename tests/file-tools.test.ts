@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterAll, describe, expect, it } from 'vitest'
@@ -76,5 +76,54 @@ describe('write_file', () => {
     const result = await tools.get('write_file')!.execute({ path: file, content: '' }, ctx)
     expect(result.ok).toBe(true)
     expect(await readFile(file, 'utf-8')).toBe('')
+  })
+})
+
+describe('list_dir', () => {
+  it('列出目录下的文件与子目录（子目录带 /）', async () => {
+    const dir = await makeDir()
+    await writeFile(join(dir, 'a.txt'), 'x', 'utf-8')
+    await mkdir(join(dir, 'sub'))
+    const result = await tools.get('list_dir')!.execute({ path: dir }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain('a.txt')
+    expect(result.content).toContain('sub/')
+  })
+
+  it('path 为空或省略时列出工作区根目录', async () => {
+    const dir = await makeDir()
+    await writeFile(join(dir, 'root.txt'), 'x', 'utf-8')
+    const rootCtx = { workspace: dir, resolvePath: (p: string) => join(dir, p) }
+    const result = await tools.get('list_dir')!.execute({}, rootCtx)
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain(dir)
+    expect(result.content).toContain('root.txt')
+  })
+
+  it('目标是文件返回失败', async () => {
+    const dir = await makeDir()
+    const file = join(dir, 'f.txt')
+    await writeFile(file, 'x', 'utf-8')
+    const result = await tools.get('list_dir')!.execute({ path: file }, ctx)
+    expect(result.ok).toBe(false)
+    expect(result.content).toContain('目标是文件而非目录')
+  })
+
+  it('目录不存在返回失败', async () => {
+    const dir = await makeDir()
+    const result = await tools.get('list_dir')!.execute({ path: join(dir, 'nope') }, ctx)
+    expect(result.ok).toBe(false)
+    expect(result.content).toContain('目录不存在')
+  })
+
+  it('条目过多时截断并提示总数', async () => {
+    const dir = await makeDir()
+    for (let i = 0; i < 105; i++) {
+      await writeFile(join(dir, `f${String(i).padStart(3, '0')}.txt`), 'x', 'utf-8')
+    }
+    const result = await tools.get('list_dir')!.execute({ path: dir }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain('共 105 个条目')
+    expect(result.content).toContain('已显示前 100')
   })
 })

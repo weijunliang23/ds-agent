@@ -18,7 +18,7 @@ const RETRIEVAL_CONTEXT_PREFIX = '以下是历史对话中与当前问题相关�
 // Lightweight guidance that discourages unnecessary tool usage (e.g. calling
 // read_file/write_file for a trivial arithmetic question and looping on them).
 const TOOL_GUIDANCE_PROMPT =
-  '你是 my-agent 的助手。简单问题请直接回答；仅在确实需要读写本地文件时才调用 read_file/write_file 工具，不要为了验证或演示而重复调用工具。'
+  '你是 my-agent 的助手。简单问题请直接回答；仅在确实需要读写本地文件或查看目录时才调用 read_file/write_file/list_dir 工具，不要为了验证或演示而重复调用工具。'
 
 // Retrieves relevant chunks for a session; injected by buildContextualMessages.
 type RetrieveFn = (sessionId: string, query: string, topK: number) => ContextChunk[]

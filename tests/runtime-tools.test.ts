@@ -308,6 +308,32 @@ describe('RuntimeImpl 工具调用循环', () => {
     expect(conv?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
   })
 
+  it('模型调用 list_dir 列出工作区目录内容并回喂结果', async () => {
+    const dir = await makeTempDir()
+    await writeFile(join(dir, 'note.txt'), '内容', 'utf-8')
+
+    const { runtime, router } = makeToolRuntime({ workspace: dir })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    vi.mocked(router.chat)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 'l1', name: 'list_dir', arguments: '{}' }]
+      })
+      .mockResolvedValueOnce({ content: '工作区里有 note.txt' })
+
+    const reply = await runtime.handleMessage(sid, '工作区里有什么')
+    expect(reply).toBe('工作区里有 note.txt')
+    expect(vi.mocked(router.chat)).toHaveBeenCalledTimes(2)
+
+    const secondCall = vi.mocked(router.chat).mock.calls[1] as unknown[]
+    const toolMessages = (
+      secondCall[0] as Array<{ role: string; content: string }>
+    ).filter((m) => m.role === 'tool')
+    expect(toolMessages[0].content).toContain('note.txt')
+  })
+
   it('工具调用循环首轮同样注入检索上下文', async () => {
     const dir = await makeTempDir()
     const file = join(dir, 'data.txt')
