@@ -15,6 +15,11 @@ import {
 // snippets; kept separate from real system prompts so tests can assert on it.
 const RETRIEVAL_CONTEXT_PREFIX = '以下是历史对话中与当前问题相关的片段：'
 
+// Base instruction sent with every request: always answer in the user's own
+// language unless they explicitly ask for another one.
+const BASE_SYSTEM_PROMPT =
+  '你是 my-agent 的桌面 AI 助手。始终使用用户提问所用的语言回答：用户用中文提问就用中文回答，用英文提问就用英文回答；除非用户明确要求使用其他语言，否则不要切换语言。'
+
 // Lightweight guidance that discourages unnecessary tool usage (e.g. calling
 // read_file/write_file for a trivial arithmetic question and looping on them).
 const TOOL_GUIDANCE_PROMPT =
@@ -24,9 +29,10 @@ const TOOL_GUIDANCE_PROMPT =
 type RetrieveFn = (sessionId: string, query: string, topK: number) => ContextChunk[]
 
 // Build the model input for one round:
-// 1. (optional) tool guidance as the leading system message;
-// 2. (optional) retrieved snippets from history older than the recent window;
-// 3. the recent window verbatim for coherence.
+// 1. the base system prompt (language rule) is always the leading system message;
+// 2. (optional) tool guidance when tools are available;
+// 3. (optional) retrieved snippets from history older than the recent window;
+// 4. the recent window verbatim for coherence.
 // The window never splits an assistant tool_calls message from its tool result,
 // otherwise some providers reject the message sequence with HTTP 400.
 export function buildContextualMessages(
@@ -45,7 +51,7 @@ export function buildContextualMessages(
   }
   const recent = history.slice(windowStart)
 
-  const messages: ChatMessage[] = []
+  const messages: ChatMessage[] = [{ role: 'system', content: BASE_SYSTEM_PROMPT }]
   if (hasTools) {
     messages.push({ role: 'system', content: TOOL_GUIDANCE_PROMPT })
   }

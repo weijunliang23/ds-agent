@@ -105,12 +105,14 @@ describe('RuntimeImpl', () => {
       apiKey: 'k',
       baseUrl: 'https://api.example.com/v1'
     })
-    expect((args[0] as Array<{ role: string; content: string }>).map((m) => m.content)).toEqual(['你好'])
+    const firstMessages = args[0] as Array<{ role: string; content: string }>
+    expect(firstMessages[0].role).toBe('system')
+    expect(firstMessages.filter((m) => m.role === 'user').map((m) => m.content)).toEqual(['你好'])
 
     const reply2 = await runtime.handleMessage(sid, '还记得刚才吗')
     const secondCall = vi.mocked(router.streamChat).mock.calls[1] as unknown[]
     expect(
-      (secondCall[0] as Array<{ role: string; content: string }>).map((m) => m.content)
+      (secondCall[0] as Array<{ role: string; content: string }>).filter((m) => m.role !== 'system').map((m) => m.content)
     ).toEqual(['你好', '助手回复', '还记得刚才吗'])
     expect(reply2).toBe('助手回复')
   })
@@ -142,7 +144,7 @@ describe('RuntimeImpl', () => {
     await runtime.streamMessage('old', '新问题', undefined, () => {})
     const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
     expect(
-      (args[0] as Array<{ role: string; content: string }>).map((m) => m.content)
+      (args[0] as Array<{ role: string; content: string }>).filter((m) => m.role !== 'system').map((m) => m.content)
     ).toEqual(['旧消息', '新问题'])
   })
 
@@ -212,7 +214,7 @@ describe('RuntimeImpl', () => {
     await runtime.streamMessage(sid, '再问', undefined, () => {})
     const secondCall = vi.mocked(router.streamChat).mock.calls[1] as unknown[]
     expect(
-      (secondCall[0] as Array<{ role: string; content: string }>).map((m) => m.content)
+      (secondCall[0] as Array<{ role: string; content: string }>).filter((m) => m.role !== 'system').map((m) => m.content)
     ).toEqual(['问', '答案', '再问'])
   })
 
@@ -314,10 +316,12 @@ describe('RuntimeImpl 上下文检索注入', () => {
     const messages = args[0] as Array<{ role: string; content: string }>
 
     expect(messages[0].role).toBe('system')
-    expect(messages[0].content).toContain('苹果的价格策略')
-    expect(messages[0].content).toContain('以下是历史对话中与当前问题相关的片段')
-    expect(messages.length).toBe(1 + 8)
-    expect(messages.slice(1).map((m) => m.content)).toEqual([
+    expect(messages[0].content).toContain('语言')
+    expect(messages[1].role).toBe('system')
+    expect(messages[1].content).toContain('苹果的价格策略')
+    expect(messages[1].content).toContain('以下是历史对话中与当前问题相关的片段')
+    expect(messages.length).toBe(2 + 8)
+    expect(messages.slice(2).map((m) => m.content)).toEqual([
       '今天是晴天。',
       '明天的会议几点',
       '上午十点。',
@@ -329,7 +333,7 @@ describe('RuntimeImpl 上下文检索注入', () => {
     ])
   })
 
-  it('retrievalEnabled=false 时不注入 system 上下文块', async () => {
+  it('retrievalEnabled=false 时不注入检索上下文块', async () => {
     const { runtime, router, conversations } = makeRuntime({
       settings: { llm: { apiKey: 'k', baseUrl: 'u' }, context: { retrievalEnabled: false } }
     })
@@ -340,10 +344,10 @@ describe('RuntimeImpl 上下文检索注入', () => {
     await runtime.streamMessage('old', '现在聊聊苹果', undefined, () => {})
     const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
     const messages = args[0] as Array<{ role: string; content: string }>
-    expect(messages.every((m) => m.role !== 'system')).toBe(true)
+    expect(messages.filter((m) => m.content.includes('片段'))).toHaveLength(0)
   })
 
-  it('检索无命中时不注入 system 块', async () => {
+  it('检索无命中时不注入检索上下文块', async () => {
     const { runtime, router, conversations } = makeRuntime({
       settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
     })
@@ -354,6 +358,6 @@ describe('RuntimeImpl 上下文检索注入', () => {
     await runtime.streamMessage('old', '量子物理是什么', undefined, () => {})
     const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
     const messages = args[0] as Array<{ role: string; content: string }>
-    expect(messages.every((m) => m.role !== 'system')).toBe(true)
+    expect(messages.filter((m) => m.content.includes('片段'))).toHaveLength(0)
   })
 })
