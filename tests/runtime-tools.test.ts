@@ -238,6 +238,26 @@ describe('RuntimeImpl 工具调用循环', () => {
     expect(events.filter((e) => e === 'tool:start')).toHaveLength(2)
   })
 
+  it('工具循环超过最大迭代次数后会话被持久化', async () => {
+    const dir = await makeTempDir()
+    const { runtime, router, conversations } = makeToolRuntime({ workspace: dir, maxIterations: 2 })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    vi.mocked(router.chat).mockResolvedValue({
+      content: '',
+      toolCalls: [
+        { id: 't', name: 'read_file', arguments: JSON.stringify({ path: join(dir, 'x.txt') }) }
+      ]
+    })
+
+    await runtime.streamMessage(sid, '循环', undefined, () => {})
+    const conv = await conversations.store.get(sid)
+    expect(conv).not.toBeNull()
+    expect(conv!.messages.map((m) => m.role)).toContain('tool')
+    expect(conv!.messages.length).toBeGreaterThanOrEqual(5)
+  })
+
   it('工具调用期间中止发出 stopped', async () => {
     const dir = await makeTempDir()
     const { runtime, router } = makeToolRuntime({ workspace: dir })
@@ -324,7 +344,9 @@ describe('RuntimeImpl 工具调用循环', () => {
     const firstCall = vi.mocked(router.chat).mock.calls[0] as unknown[]
     const messages = firstCall[0] as Array<{ role: string; content: string }>
     expect(messages[0].role).toBe('system')
-    expect(messages[0].content).toContain('项目计划')
+    expect(messages[0].content).toContain('直接回答')
+    expect(messages[1].role).toBe('system')
+    expect(messages[1].content).toContain('项目计划')
   })
 
   it('未配置模型时工具路径同样拦截', async () => {

@@ -1,6 +1,6 @@
 import { isConfigured, loadConfig, type AppConfig, type EnvLike } from '../shared/config'
 import type { SettingsStore } from '../shared/settings'
-import type { ContextEngine } from './context-engine'
+import type { ContextChunk, ContextEngine } from './context-engine'
 import type { ChatMessage, ChatOptions, FimInput, ModelRouter } from './model-router'
 import type { ToolExecutor } from './tools/executor'
 import {
@@ -14,6 +14,53 @@ import {
 // Prefix for the synthetic system block that carries retrieved historical
 // snippets; kept separate from real system prompts so tests can assert on it.
 const RETRIEVAL_CONTEXT_PREFIX = '以下是历史对话中与当前问题相关的片段：'
+
+// Lightweight guidance that discourages unnecessary tool usage (e.g. calling
+// read_file/write_file for a trivial arithmetic question and looping on them).
+const TOOL_GUIDANCE_PROMPT =
+  '你是 my-agent 的助手。简单问题请直接回答；仅在确实需要读写本地文件时才调用 read_file/write_file 工具，不要为了验证或演示而重复调用工具。'
+
+// Retrieves relevant chunks for a session; injected by buildContextualMessages.
+type RetrieveFn = (sessionId: string, query: string, topK: number) => ContextChunk[]
+
+// Build the model input for one round:
+// 1. (optional) tool guidance as the leading system message;
+// 2. (optional) retrieved snippets from history older than the recent window;
+// 3. the recent window verbatim for coherence.
+// The window never splits an assistant tool_calls message from its tool result,
+// otherwise some providers reject the message sequence with HTTP 400.
+export function buildContextualMessages(
+  retrieve: RetrieveFn,
+  sessionId: string,
+  history: ChatMessage[],
+  userText: string,
+  config: AppConfig,
+  hasTools: boolean
+): ChatMessage[] {
+  const { retrievalEnabled, topK, recentWindow } = config.context
+  let windowStart = Math.max(0, history.length - recentWindow)
+  // A tool message must keep its preceding assistant tool_calls message.
+  if (windowStart > 0 && history[windowStart]?.role === 'tool') {
+    windowStart -= 1
+  }
+  const recent = history.slice(windowStart)
+
+  const messages: ChatMessage[] = []
+  if (hasTools) {
+    messages.push({ role: 'system', content: TOOL_GUIDANCE_PROMPT })
+  }
+
+  if (retrievalEnabled && userText.trim() !== '') {
+    const chunks = retrieve(sessionId, userText, topK).filter((c) => c.messageIndex < windowStart)
+    if (chunks.length > 0) {
+      const contextBlock = `${RETRIEVAL_CONTEXT_PREFIX}\n${chunks.map((c) => c.text).join('\n')}`
+      messages.push({ role: 'system', content: contextBlock })
+    }
+  }
+
+  messages.push(...recent)
+  return messages
+}
 
 export type StreamMessageEvent =
   | { type: 'reasoning'; text: string }
@@ -149,7 +196,13 @@ export class RuntimeImpl implements Runtime {
       return
     }
 
-    const history = this.buildContextualMessages(sessionId, this.context.getHistory(sessionId), text, config)
+    const history = this.buildContextualMessages(
+      sessionId,
+      this.context.getHistory(sessionId),
+      text,
+      config,
+      tools.length > 0
+    )
     let partialContent = ''
     let partialReasoning = ''
 
@@ -211,7 +264,8 @@ export class RuntimeImpl implements Runtime {
       sessionId,
       this.context.getHistory(sessionId),
       firstUserText,
-      config
+      config,
+      definitions.length > 0
     )
 
     try {
@@ -250,7 +304,8 @@ export class RuntimeImpl implements Runtime {
             sessionId,
             this.context.getHistory(sessionId),
             firstUserText,
-            config
+            config,
+            definitions.length > 0
           )
           continue
         }
@@ -269,6 +324,7 @@ export class RuntimeImpl implements Runtime {
         return
       }
 
+      await this.persistConversation(sessionId, firstUserText)
       onEvent({ type: 'error', message: `工具调用超过最大迭代次数（${maxIterations}），已停止` })
     } catch (err) {
       if (signal?.aborted) {
@@ -280,32 +336,22 @@ export class RuntimeImpl implements Runtime {
     }
   }
 
-  // Build the model input: keep the recent window verbatim for coherence and
-  // inject retrieved snippets from older history as a synthetic system block.
+  // Thin wrapper over the exported pure builder, binding the engine's retrieve.
   private buildContextualMessages(
     sessionId: string,
     history: ChatMessage[],
     userText: string,
-    config: AppConfig
+    config: AppConfig,
+    hasTools: boolean
   ): ChatMessage[] {
-    const { retrievalEnabled, topK, recentWindow } = config.context
-    const windowStart = Math.max(0, history.length - recentWindow)
-    const recent = history.slice(windowStart)
-
-    if (!retrievalEnabled || userText.trim() === '') {
-      return recent
-    }
-
-    const chunks = this.context
-      .retrieve(sessionId, userText, topK)
-      .filter((c) => c.messageIndex < windowStart)
-
-    if (chunks.length === 0) {
-      return recent
-    }
-
-    const contextBlock = `${RETRIEVAL_CONTEXT_PREFIX}\n${chunks.map((c) => c.text).join('\n')}`
-    return [{ role: 'system', content: contextBlock }, ...recent]
+    return buildContextualMessages(
+      (sid, query, topK) => this.context.retrieve(sid, query, topK),
+      sessionId,
+      history,
+      userText,
+      config,
+      hasTools
+    )
   }
 
   private async persistConversation(sessionId: string, firstUserText: string): Promise<void> {
