@@ -37,10 +37,11 @@ export class Permissions {
     if (req.action === 'write') {
       return this.getConfig().writePolicy
     }
+    const readPolicy = this.getConfig().readPolicy
     if (this.getConfig().workspace !== '' && this.isInsideWorkspace(req.path)) {
-      return this.getConfig().readPolicy
+      return readPolicy
     }
-    return 'ask'
+    return readPolicy === 'deny' ? 'deny' : 'ask'
   }
 
   decide(req: PermissionRequest): PermissionDecision | 'ask' {

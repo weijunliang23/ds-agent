@@ -38,9 +38,9 @@
 export interface Tool {
   name: string;                 // 唯一名称，如 read_file
   description: string;          // 给模型看的说明
-  parameters: JsonSchema;       // 参数 JSON Schema（子集）
-  permission?: PermissionRequest; // 工具声明所需的权限；无则不需确认
-  execute(args: unknown, ctx: ToolContext): Promise<ToolResult>;
+  parameters: ToolParameterSchema; // 参数 JSON Schema（子集）
+  permission?: ToolPermission;  // 工具声明的权限（action + 参数名）；无则不需确认
+  execute(args: Record<string, unknown>, ctx: ToolContext): Promise<ToolResult>;
 }
 
 export interface ToolResult {
@@ -50,16 +50,19 @@ export interface ToolResult {
 
 export interface ToolContext {
   workspace: string;                       // 当前工作区根目录
-  resolvePath(p: string): string;          // 规范化绝对路径，越出 workspace 时抛错（防 ../ 穿越）
+  resolvePath(p: string): string;          // 规范化绝对路径；越出工作区交由权限层裁决（不抛错）
 }
 
+export type PermissionAction = 'read' | 'write';
 export type PermissionPolicy = 'allow' | 'ask' | 'deny';
-export interface PermissionRequest { action: 'read' | 'write'; path: string; }
-export type PermissionVerdict =
-  | { decision: 'allow'; reason: string }
-  | { decision: 'deny'; reason: string }
-  | { decision: 'ask'; permissionId: string };
+export interface PermissionRequest { action: PermissionAction; path: string; }
+export interface ToolPermission { action: PermissionAction; pathArg: string; }
+
+// 权限裁决：decide() 返回 'allow' | 'deny' | 'ask'；authorize() 将 ask 交给确认通道（requester）解析，
+// 无确认通道时按 deny 处理；ask 允许后同一路径同一 action 在会话内记住为 allow
 ```
+
+> 说明：`PermissionVerdict` 未单独建模——`Permissions.decide` 返回 `'allow' | 'deny' | 'ask'`，`authorize` 内部把 `ask` 交给 `PermissionRequester` 解析（IPC 确认，30s 超时按拒绝）。`resolvePath` 只做规范化不抛错，越界访问统一由权限层裁决（工作区外读取默认 ask，`readPolicy=deny` 时直接 deny）。
 
 - `validateArgs(schema, args)`：按 JSON Schema 子集校验模型传入的参数，失败返回可读错误，**未通过校验的工具参数绝不进入执行**
 - 工具执行产生的异常一律捕获并包装成 `ToolResult { ok: false, content: 错误信息 }` 回传模型，不能让未捕获异常穿透到 Runtime
@@ -108,7 +111,7 @@ my-agent/
 
 ## 可验证的结束状态
 - 对话中让模型「读取 `/tmp/x.txt`」→ 模型调用 `read_file`，内容被读入并在回复中体现
-- 对话中让模型「把某内容写入 `D:/work/out.txt`」→ 触发写权限确认弹窗，允许后文件成功写入、模型确认完成
+- 对话中让模型「把某内容写入 `D:/work/out.txt`」→ 触发写权限确认条，允许后文件成功写入、模型确认完成
 - `writePolicy = deny` 或用户拒绝时：不落盘，模型得到「无权限」的可读错误并据此回应
 - 工具调用失败（路径不存在 / 参数非法）：不崩溃，Chat 卡片显示失败原因，模型能读回错误
 - 工具循环有迭代上限，超限即停止并提示，不无限消耗

@@ -37,6 +37,11 @@ describe('Permissions.decide', () => {
     expect(p.decide({ action: 'read', path: '/data/secret.txt' })).toBe('ask')
   })
 
+  it('工作区外读取在 readPolicy=deny 时直接 deny', () => {
+    const p = makePermissions({ workspace: ws, readPolicy: 'deny' })
+    expect(p.decide({ action: 'read', path: '/data/secret.txt' })).toBe('deny')
+  })
+
   it('写入按 writePolicy 裁决', () => {
     const p = makePermissions({ workspace: ws, writePolicy: 'deny' })
     expect(p.decide({ action: 'write', path: resolve(ws, 'b.txt') })).toBe('deny')
