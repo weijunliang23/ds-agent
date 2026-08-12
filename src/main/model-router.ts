@@ -27,6 +27,8 @@ export interface ChatCompletionResult {
   content: string
   reasoningContent?: string
   toolCalls?: ToolCall[]
+  // id of the provider that actually served the request (after fallback).
+  usedProviderId?: string
 }
 
 export type ThinkingMode = 'enabled' | 'disabled'
@@ -53,6 +55,18 @@ export interface StreamHandlers {
 }
 
 const defaultFetch: ChatFetcher = (url, init) => fetch(url, init)
+
+// Providers that are configured enough to attempt (apiKey + baseUrl present).
+function usableProviders(providers: LlmProviderConfig[]): LlmProviderConfig[] {
+  return providers.filter((p) => p.apiKey !== '' && p.baseUrl !== '')
+}
+
+function buildAggregateError(failures: string[], usable: LlmProviderConfig[]): Error {
+  if (usable.length === 0) {
+    return new Error('未配置模型：缺少 AppKey 或 API 地址')
+  }
+  return new Error(`模型请求全部失败：${failures.join('; ')}`)
+}
 
 export interface ModelRouter {
   chat(
@@ -119,16 +133,6 @@ export class OpenAIModelRouter implements ModelRouter {
     return `${baseUrl.replace(/\/+$/, '')}${path}`
   }
 
-  // Pick the first usable provider from the configured list. Ordered fallback
-  // across providers is added by the routing step (Batch 4).
-  private pickProvider(providers: LlmProviderConfig[]): LlmProviderConfig {
-    const usable = providers.find((p) => p.apiKey !== '' && p.baseUrl !== '')
-    if (!usable) {
-      throw new Error('未配置模型：缺少 AppKey 或 API 地址')
-    }
-    return usable
-  }
-
   private async request(
     url: string,
     settings: LlmSettings,
@@ -167,6 +171,10 @@ export class OpenAIModelRouter implements ModelRouter {
     return res
   }
 
+  // Try providers in order; each failed attempt is recorded and the next
+  // provider is tried. Only when every provider fails is the aggregate error
+  // thrown. Errors during the setup/parse phase count as an attempt failure,
+  // so a malformed response also triggers fallback.
   async chat(
     messages: ChatMessage[],
     providers: LlmProviderConfig[],
@@ -174,8 +182,25 @@ export class OpenAIModelRouter implements ModelRouter {
     tools?: ToolDefinition[],
     signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
-    const settings = this.pickProvider(providers)
+    const usable = usableProviders(providers)
+    const failures: string[] = []
+    for (const provider of usable) {
+      try {
+        return await this.chatOnce(messages, provider, options, tools, signal)
+      } catch (err) {
+        failures.push(`${provider.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    throw buildAggregateError(failures, usable)
+  }
 
+  private async chatOnce(
+    messages: ChatMessage[],
+    settings: LlmProviderConfig,
+    options: ChatOptions | undefined,
+    tools: ToolDefinition[] | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<ChatCompletionResult> {
     const body: Record<string, unknown> = {
       model: settings.model,
       messages: toApiMessages(messages)
@@ -211,10 +236,14 @@ export class OpenAIModelRouter implements ModelRouter {
       ...(typeof reasoningContent === 'string' && reasoningContent !== ''
         ? { reasoningContent }
         : {}),
-      ...(toolCalls ? { toolCalls } : {})
+      ...(toolCalls ? { toolCalls } : {}),
+      usedProviderId: settings.id
     }
   }
 
+  // Streaming fallback only applies during the request setup phase (connect /
+  // HTTP error / missing body). Once the stream starts, mid-stream errors are
+  // not retried because partial output cannot be replayed on another provider.
   async streamChat(
     messages: ChatMessage[],
     providers: LlmProviderConfig[],
@@ -222,8 +251,27 @@ export class OpenAIModelRouter implements ModelRouter {
     handlers: StreamHandlers,
     signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
-    const settings = this.pickProvider(providers)
+    const usable = usableProviders(providers)
+    const failures: string[] = []
+    for (const provider of usable) {
+      let res: Response
+      try {
+        res = await this.requestStream(messages, provider, options, signal)
+      } catch (err) {
+        failures.push(`${provider.id}: ${err instanceof Error ? err.message : String(err)}`)
+        continue
+      }
+      return await this.parseStream(res, provider, handlers)
+    }
+    throw buildAggregateError(failures, usable)
+  }
 
+  private async requestStream(
+    messages: ChatMessage[],
+    settings: LlmProviderConfig,
+    options: ChatOptions | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<Response> {
     const body: Record<string, unknown> = {
       model: settings.model,
       messages: toApiMessages(messages),
@@ -245,8 +293,15 @@ export class OpenAIModelRouter implements ModelRouter {
     if (!res.body) {
       throw new Error('模型返回格式异常：响应不支持流式读取')
     }
+    return res
+  }
 
-    const reader = res.body.getReader()
+  private async parseStream(
+    res: Response,
+    settings: LlmProviderConfig,
+    handlers: StreamHandlers
+  ): Promise<ChatCompletionResult> {
+    const reader = res.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let content = ''
@@ -301,13 +356,25 @@ export class OpenAIModelRouter implements ModelRouter {
 
     return {
       content,
-      ...(reasoningContent !== '' ? { reasoningContent } : {})
+      ...(reasoningContent !== '' ? { reasoningContent } : {}),
+      usedProviderId: settings.id
     }
   }
 
   async fim(input: FimInput, providers: LlmProviderConfig[]): Promise<ChatCompletionResult> {
-    const settings = this.pickProvider(providers)
+    const usable = usableProviders(providers)
+    const failures: string[] = []
+    for (const provider of usable) {
+      try {
+        return await this.fimOnce(input, provider)
+      } catch (err) {
+        failures.push(`${provider.id}: ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    throw buildAggregateError(failures, usable)
+  }
 
+  private async fimOnce(input: FimInput, settings: LlmProviderConfig): Promise<ChatCompletionResult> {
     const body: Record<string, unknown> = {
       model: settings.model,
       prompt: input.prompt
@@ -331,6 +398,6 @@ export class OpenAIModelRouter implements ModelRouter {
     if (typeof text !== 'string') {
       throw new Error('FIM 返回格式异常：缺少 choices[0].text')
     }
-    return { content: text }
+    return { content: text, usedProviderId: settings.id }
   }
 }

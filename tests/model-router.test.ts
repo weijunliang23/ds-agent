@@ -258,3 +258,123 @@ describe('OpenAIModelRouter', () => {
     await expect(promise).rejects.toThrow(/abort/i)
   })
 })
+
+const providerA = { id: 'primary', apiKey: 'k1', baseUrl: 'https://a.example.com/v1', model: 'm1', timeoutMs: 1000 }
+const providerB = { id: 'backup', apiKey: 'k2', baseUrl: 'https://b.example.com/v1', model: 'm2', timeoutMs: 1000 }
+
+describe('OpenAIModelRouter 多 provider 回退', () => {
+  it('chat 第一个 provider 失败时回退到下一个并返回 usedProviderId', async () => {
+    const fetchMock = vi
+      .fn<ChatFetcher>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'boom' } }, false, 500))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: '备用回复' } }] }))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const result = await router.chat([{ role: 'user', content: 'hi' }], [providerA, providerB])
+    expect(result.content).toBe('备用回复')
+    expect(result.usedProviderId).toBe('backup')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    const urls = fetchMock.mock.calls.map((c) => c[0] as string)
+    expect(urls).toEqual([
+      'https://a.example.com/v1/chat/completions',
+      'https://b.example.com/v1/chat/completions'
+    ])
+  })
+
+  it('chat 第一个成功时不触碰第二个 provider', async () => {
+    const fetchMock = vi.fn<ChatFetcher>().mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const result = await router.chat([], [providerA, providerB])
+    expect(result.usedProviderId).toBe('primary')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('chat 全部 provider 失败时抛聚合错误', async () => {
+    const fetchMock = vi.fn<ChatFetcher>().mockRejectedValue(new Error('ECONNRESET'))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    await expect(router.chat([], [providerA, providerB])).rejects.toThrow(
+      /模型请求全部失败：primary: .*; backup: .*/
+    )
+  })
+
+  it('chat 跳过未配置的 provider（缺 baseUrl 不参与回退）', async () => {
+    const fetchMock = vi.fn<ChatFetcher>().mockResolvedValue(jsonResponse({ choices: [{ message: { content: 'ok' } }] }))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const result = await router.chat([], [
+      { id: 'empty', apiKey: '', baseUrl: '', model: '', timeoutMs: 1000 },
+      providerB
+    ])
+    expect(result.usedProviderId).toBe('backup')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('格式异常也会触发回退', async () => {
+    const fetchMock = vi
+      .fn<ChatFetcher>()
+      .mockResolvedValueOnce(jsonResponse({ choices: [] }))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: '正常' } }] }))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const result = await router.chat([], [providerA, providerB])
+    expect(result.content).toBe('正常')
+    expect(result.usedProviderId).toBe('backup')
+  })
+
+  it('streamChat 发起阶段失败回退到下一个 provider', async () => {
+    const lines = ['data: {"choices":[{"delta":{"content":"备用"}}]}\n', '\n', 'data: [DONE]\n', '\n']
+    const fetchMock = vi
+      .fn<ChatFetcher>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'down' } }, false, 503))
+      .mockResolvedValueOnce(streamResponse(lines))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const chunks: string[] = []
+    const result = await router.streamChat([], [providerA, providerB], undefined, {
+      onReasoning: () => {},
+      onContent: (d) => chunks.push(d)
+    })
+    expect(result.content).toBe('备用')
+    expect(result.usedProviderId).toBe('backup')
+    expect(chunks).toEqual(['备用'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('streamChat 流中途失败不回退（第二个 provider 不被调用）', async () => {
+    const failingStream = {
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(''),
+      json: () => Promise.resolve({}),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(
+            new TextEncoder().encode('data: {"choices":[{"delta":{"content":"部分"}}]}\n\n')
+          )
+          controller.error(new Error('stream broke'))
+        }
+      })
+    } as unknown as Response
+    const fetchMock = vi.fn<ChatFetcher>().mockResolvedValue(failingStream)
+    const router = new OpenAIModelRouter(fetchMock)
+
+    await expect(
+      router.streamChat([], [providerA, providerB], undefined, noopHandlers)
+    ).rejects.toThrow(/模型请求失败：stream broke/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('fim 失败时回退到下一个 provider', async () => {
+    const fetchMock = vi
+      .fn<ChatFetcher>()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: 'x' } }, false, 500))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ text: '补全' }] }))
+    const router = new OpenAIModelRouter(fetchMock)
+
+    const result = await router.fim({ prompt: 'p' }, [providerA, providerB])
+    expect(result.content).toBe('补全')
+    expect(result.usedProviderId).toBe('backup')
+  })
+})
