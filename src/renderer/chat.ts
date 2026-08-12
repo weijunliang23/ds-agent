@@ -149,10 +149,28 @@ export function initChat(options: ChatOptions): ChatController {
     if (!messagesEl) return null
     const el = document.createElement('div')
     el.className = `tool-card ${state}`
+
+    const header = document.createElement('div')
+    header.className = 'tool-card-header'
+
     const titleEl = document.createElement('div')
     titleEl.className = 'tool-card-title'
     titleEl.textContent = title
-    el.appendChild(titleEl)
+
+    const toggle = document.createElement('button')
+    toggle.className = 'tool-card-toggle'
+    toggle.type = 'button'
+    toggle.textContent = '▾'
+    toggle.title = '折叠'
+    toggle.addEventListener('click', () => {
+      const collapsed = el.classList.toggle('collapsed')
+      toggle.textContent = collapsed ? '▸' : '▾'
+      toggle.title = collapsed ? '展开' : '折叠'
+      scrollToBottom()
+    })
+
+    header.append(titleEl, toggle)
+    el.appendChild(header)
     messagesEl.appendChild(el)
     scrollToBottom()
     return el
