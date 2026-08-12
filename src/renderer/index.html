@@ -86,22 +86,25 @@
 
       <section id="settings-view" class="settings-view" hidden>
         <form id="settings-form" class="settings-form">
-          <h2>模型设置</h2>
-          <label class="field">
-            <span>AppKey（模型密钥）</span>
-            <input id="set-api-key" type="password" autocomplete="off" placeholder="sk-xxx" />
+          <h2>模型设置（多 Provider，按顺序回退）</h2>
+          <div id="provider-list" class="provider-list"></div>
+          <button id="btn-add-provider" class="btn-ghost" type="button">＋ 添加 Provider</button>
+          <h2>上下文检索</h2>
+          <label class="field-checkbox">
+            <input id="set-retrieval-enabled" type="checkbox" checked />
+            <span>启用历史上下文检索</span>
           </label>
           <label class="field">
-            <span>API 地址</span>
-            <input id="set-base-url" type="url" autocomplete="off" placeholder="https://api.example.com/v1" />
+            <span>检索片段数（topK）</span>
+            <input id="set-context-top-k" type="number" min="1" max="20" placeholder="3" />
           </label>
           <label class="field">
-            <span>模型名</span>
-            <input id="set-model" type="text" autocomplete="off" placeholder="deepseek-chat" />
+            <span>最近消息窗口（原样保留条数）</span>
+            <input id="set-context-recent-window" type="number" min="0" placeholder="8" />
           </label>
           <label class="field">
-            <span>超时（毫秒）</span>
-            <input id="set-timeout" type="number" min="1000" placeholder="60000" />
+            <span>片段切分长度（字符）</span>
+            <input id="set-context-chunk-size" type="number" min="100" placeholder="500" />
           </label>
           <h2>工具设置</h2>
           <label class="field">

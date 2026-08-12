@@ -60,13 +60,15 @@ export interface ContextChunk {
 
 export interface RetrievalStrategy {
   index(chunk: ContextChunk): void          // 增量索引
-  search(query: string, topK: number): ContextChunk[]
+  search(query: string, topK: number, sessionId?: string): ContextChunk[]
+  remove(sessionId: string): void           // 会话删除时清除对应索引
   clear(): void
 }
 
 // ContextEngine 新增（现有方法不变，不破坏 phase1/phase2 测试）
 retrieve(sessionId: string, query: string, topK: number): ContextChunk[]
 setRetrievalStrategy(strategy: RetrievalStrategy): void
+setChunkSize(size: number): void
 ```
 
 实现：
