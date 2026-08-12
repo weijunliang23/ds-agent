@@ -15,6 +15,12 @@ interface StoredMessage {
   reasoningContent?: string
 }
 
+// Only real model/config failures should offer the "check settings" shortcut;
+// business errors (e.g. the tool-loop guard) must show the raw message only.
+function isModelConfigError(message: string): boolean {
+  return message.includes('未配置模型') || message.includes('模型请求失败')
+}
+
 export function initChat(options: ChatOptions): ChatController {
   const messagesEl = document.getElementById('messages')
   const formEl = document.getElementById('chat-form') as HTMLFormElement | null
@@ -123,6 +129,10 @@ export function initChat(options: ChatOptions): ChatController {
     el.append(text, action)
     messagesEl.appendChild(el)
     messagesEl.scrollTop = messagesEl.scrollHeight
+  }
+
+  function appendSettingsHint(onOpenSettings: () => void): void {
+    appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', onOpenSettings)
   }
 
   function clearMessages(): void {
@@ -393,7 +403,9 @@ export function initChat(options: ChatOptions): ChatController {
         appendMessage('system', '已停止生成')
       } else if (event.type === 'error') {
         view.error(event.message)
-        appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
+        if (isModelConfigError(event.message)) {
+          appendSettingsHint(() => options.onOpenSettings())
+        }
       } else if (event.type === 'tool:start') {
         currentToolEl = createToolCard(`调用工具 ${event.name}…`, 'running')
       } else if (event.type === 'tool:done') {
@@ -410,7 +422,9 @@ export function initChat(options: ChatOptions): ChatController {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       view?.error(message)
-      appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
+      if (isModelConfigError(message)) {
+        appendSettingsHint(() => options.onOpenSettings())
+      }
     } finally {
       currentStream = null
       if (stopBtn) stopBtn.hidden = true
@@ -433,7 +447,9 @@ export function initChat(options: ChatOptions): ChatController {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       appendMessage('error', message)
-      appendActionMessage('模型请求失败，可在设置中检查配置：', '去设置', () => options.onOpenSettings())
+      if (isModelConfigError(message)) {
+        appendSettingsHint(() => options.onOpenSettings())
+      }
     } finally {
       setBusy(false)
     }
