@@ -90,6 +90,16 @@ describe('list_dir', () => {
     expect(result.content).toContain('sub/')
   })
 
+  it('结果包含目录与文件的数量统计', async () => {
+    const dir = await makeDir()
+    await writeFile(join(dir, 'a.txt'), 'x', 'utf-8')
+    await writeFile(join(dir, 'b.txt'), 'x', 'utf-8')
+    await mkdir(join(dir, 'sub'))
+    const result = await tools.get('list_dir')!.execute({ path: dir }, ctx)
+    expect(result.ok).toBe(true)
+    expect(result.content).toContain('1 个目录，2 个文件，共 3 个条目')
+  })
+
   it('path 为空或省略时列出工作区根目录', async () => {
     const dir = await makeDir()
     await writeFile(join(dir, 'root.txt'), 'x', 'utf-8')

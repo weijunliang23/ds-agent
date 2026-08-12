@@ -99,7 +99,8 @@ export function createFileTools(): Tool[] {
         if (all.length > MAX_LIST_ENTRIES) {
           lines.push(`… 共 ${all.length} 个条目，已显示前 ${MAX_LIST_ENTRIES} 个`)
         }
-        return { ok: true, content: `目录：${path}（共 ${all.length} 个条目）\n${lines.join('\n')}` }
+        const summary = `目录：${path}（${dirs.length} 个目录，${files.length} 个文件，共 ${all.length} 个条目）`
+        return { ok: true, content: `${summary}\n${lines.join('\n')}` }
       }
     }
   ]
