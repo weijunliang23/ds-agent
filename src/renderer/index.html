@@ -50,6 +50,13 @@
             <span>FIM 补全</span>
           </label>
         </div>
+        <div id="permission-bar" class="permission-bar" hidden>
+          <span id="permission-message" class="permission-info"></span>
+          <div class="permission-actions">
+            <button id="permission-deny" class="btn-ghost" type="button">拒绝</button>
+            <button id="permission-allow" class="btn-primary" type="button">允许</button>
+          </div>
+        </div>
         <form id="chat-form" class="chat-form">
           <textarea
             id="input-message"
@@ -134,18 +141,6 @@
         <div class="modal-actions">
           <button id="confirm-cancel" class="btn-ghost" type="button">取消</button>
           <button id="confirm-ok" class="btn-danger" type="button">确定删除</button>
-        </div>
-      </div>
-    </div>
-
-    <div id="permission-modal" class="modal" hidden>
-      <div class="modal-backdrop"></div>
-      <div class="modal-card">
-        <h3 class="modal-title">工具权限请求</h3>
-        <p id="permission-message" class="modal-message"></p>
-        <div class="modal-actions">
-          <button id="permission-deny" class="btn-ghost" type="button">拒绝</button>
-          <button id="permission-allow" class="btn-primary" type="button">允许</button>
         </div>
       </div>
     </div>

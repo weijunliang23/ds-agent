@@ -10,7 +10,7 @@
 - 权限控制：`Permissions` 裁决器，按 `allow / ask / deny` 三种策略控制文件读写，路径统一规范化防目录穿越
 - 文件工具：`read_file` / `write_file`（含追加模式可选）
 - 模型路由扩展：请求带 `tools`，响应解析 `tool_calls`，支持工具调用循环（model → tool → model）
-- UI 扩展：Chat 中展示工具调用过程卡片；权限确认弹窗；设置页新增工作区与读写策略配置
+- UI 扩展：Chat 中展示工具调用过程卡片；权限确认条（内联展示在输入框上方，不遮挡消息区）；设置页新增工作区与读写策略配置
 
 ## 配置约定（在 phase1 的 `settings.json` 基础上新增）
 
@@ -72,7 +72,7 @@ export type PermissionVerdict =
 5. `src/main/tools/executor.ts`：`ToolExecutor`：校验参数 → 权限裁决 → 执行 → 错误捕获，单测
 6. `src/main/model-router.ts` 扩展：请求带 `tools`、响应解析 `tool_calls`，单测 mock fetch
 7. `src/main/runtime.ts` 扩展：工具调用循环（取历史 → 调模型 → 若有 `tool_calls` 执行工具 → 回喂结果再调模型 → 直到普通回复或超迭代上限），单测
-8. IPC + UI：`tool:permission-request` / `tool:permission-response` 通道，权限确认弹窗，Chat 工具卡片（「正在读取文件… / 已完成 / 失败」）；设置页新增工作区与读写策略
+8. IPC + UI：`tool:permission-request` / `tool:permission-response` 通道，内联权限确认条（输入框上方），Chat 工具卡片（「正在读取文件… / 已完成 / 失败」）；设置页新增工作区与读写策略
 9. 收尾：`npm run check` 全绿 + 端到端手动验证「让模型读取并写一个本地文件」+ 提交
 
 ## 目录结构（本阶段新增/扩展）
