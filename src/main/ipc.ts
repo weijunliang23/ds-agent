@@ -1,5 +1,11 @@
 import { ipcMain, type BrowserWindow } from 'electron'
-import type { LlmSettings, StoredSettings, ToolSettings } from '../shared/config'
+import type {
+  ContextSettings,
+  LlmProviderConfig,
+  StoredLlmSettings,
+  StoredSettings,
+  ToolSettings
+} from '../shared/config'
 import type { Runtime } from './runtime'
 import type { ChatOptions, FimInput } from './model-router'
 import type { SettingsStore } from '../shared/settings'
@@ -168,14 +174,48 @@ function sanitizeFimInput(value: unknown): FimInput {
 function sanitizeSettings(value: unknown): StoredSettings {
   const v = (value ?? {}) as Record<string, unknown>
   const llmRaw = (v.llm ?? {}) as Record<string, unknown>
+  const contextRaw = (v.context ?? {}) as Record<string, unknown>
   const toolsRaw = (v.tools ?? {}) as Record<string, unknown>
 
-  const llm: Partial<LlmSettings> = {}
+  const llm: StoredLlmSettings = {}
   if (typeof llmRaw.apiKey === 'string') llm.apiKey = llmRaw.apiKey
   if (typeof llmRaw.baseUrl === 'string') llm.baseUrl = llmRaw.baseUrl
   if (typeof llmRaw.model === 'string') llm.model = llmRaw.model
   if (typeof llmRaw.timeoutMs === 'number' && Number.isFinite(llmRaw.timeoutMs) && llmRaw.timeoutMs > 0) {
     llm.timeoutMs = llmRaw.timeoutMs
+  }
+  if (Array.isArray(llmRaw.providers)) {
+    const providers: Array<Partial<LlmProviderConfig>> = []
+    for (const item of llmRaw.providers) {
+      if (!isRecord(item)) continue
+      const p: Partial<LlmProviderConfig> = {}
+      if (typeof item.id === 'string' && item.id !== '') p.id = item.id
+      if (typeof item.label === 'string' && item.label !== '') p.label = item.label
+      if (typeof item.apiKey === 'string') p.apiKey = item.apiKey
+      if (typeof item.baseUrl === 'string') p.baseUrl = item.baseUrl
+      if (typeof item.model === 'string') p.model = item.model
+      if (typeof item.timeoutMs === 'number' && Number.isFinite(item.timeoutMs) && item.timeoutMs > 0) {
+        p.timeoutMs = item.timeoutMs
+      }
+      providers.push(p)
+    }
+    if (providers.length > 0) llm.providers = providers
+  }
+
+  const context: Partial<ContextSettings> = {}
+  if (typeof contextRaw.retrievalEnabled === 'boolean') context.retrievalEnabled = contextRaw.retrievalEnabled
+  if (typeof contextRaw.topK === 'number' && Number.isFinite(contextRaw.topK) && contextRaw.topK >= 1) {
+    context.topK = Math.trunc(contextRaw.topK)
+  }
+  if (
+    typeof contextRaw.recentWindow === 'number' &&
+    Number.isFinite(contextRaw.recentWindow) &&
+    contextRaw.recentWindow >= 0
+  ) {
+    context.recentWindow = Math.trunc(contextRaw.recentWindow)
+  }
+  if (typeof contextRaw.chunkSize === 'number' && Number.isFinite(contextRaw.chunkSize) && contextRaw.chunkSize >= 100) {
+    context.chunkSize = Math.trunc(contextRaw.chunkSize)
   }
 
   const tools: Partial<ToolSettings> = {}
@@ -192,6 +232,11 @@ function sanitizeSettings(value: unknown): StoredSettings {
 
   const out: StoredSettings = {}
   if (Object.keys(llm).length > 0) out.llm = llm
+  if (Object.keys(context).length > 0) out.context = context
   if (Object.keys(tools).length > 0) out.tools = tools
   return out
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

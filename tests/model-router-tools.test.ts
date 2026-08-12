@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { LlmSettings } from '../src/shared/config'
+import type { LlmProviderConfig } from '../src/shared/config'
 import { OpenAIModelRouter, type ChatFetcher, type ChatMessage } from '../src/main/model-router'
 
-const settings: LlmSettings = {
+const settings: LlmProviderConfig = {
+  id: 'p1',
   apiKey: 'sk-test',
   baseUrl: 'https://api.example.com/v1/',
   model: 'deepseek-chat',
@@ -39,7 +40,7 @@ describe('OpenAIModelRouter chat with tools', () => {
     const { router, fetchMock } = makeRouter(
       jsonResponse({ choices: [{ message: { content: '好' } }] })
     )
-    await router.chat([{ role: 'user', content: 'hi' }], settings, undefined, tools)
+    await router.chat([{ role: 'user', content: 'hi' }], [settings], undefined, tools)
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     expect(body.tools).toEqual(tools)
@@ -49,7 +50,7 @@ describe('OpenAIModelRouter chat with tools', () => {
     const { router, fetchMock } = makeRouter(
       jsonResponse({ choices: [{ message: { content: '好' } }] })
     )
-    await router.chat([{ role: 'user', content: 'hi' }], settings)
+    await router.chat([{ role: 'user', content: 'hi' }], [settings])
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit
     const body = JSON.parse(String(init.body)) as Record<string, unknown>
     expect(body.tools).toBeUndefined()
@@ -74,7 +75,7 @@ describe('OpenAIModelRouter chat with tools', () => {
         ]
       })
     )
-    const result = await router.chat([{ role: 'user', content: 'hi' }], settings)
+    const result = await router.chat([{ role: 'user', content: 'hi' }], [settings])
     expect(result.content).toBe('')
     expect(result.toolCalls).toEqual([
       { id: 'call_1', name: 'read_file', arguments: '{"path":"/a.txt"}' }
@@ -96,7 +97,7 @@ describe('OpenAIModelRouter chat with tools', () => {
         ]
       })
     )
-    const result = await router.chat([], settings)
+    const result = await router.chat([], [settings])
     expect(result.content).toBe('先做一步')
     expect(result.toolCalls).toHaveLength(1)
   })
@@ -118,13 +119,13 @@ describe('OpenAIModelRouter chat with tools', () => {
         ]
       })
     )
-    const result = await router.chat([], settings)
+    const result = await router.chat([], [settings])
     expect(result.toolCalls).toEqual([{ id: 'a', name: 'x', arguments: '{}' }])
   })
 
   it('既无 content 也无 tool_calls 时抛格式错误', async () => {
     const { router } = makeRouter(jsonResponse({ choices: [{ message: {} }] }))
-    await expect(router.chat([], settings)).rejects.toThrow(/格式异常/)
+    await expect(router.chat([], [settings])).rejects.toThrow(/格式异常/)
   })
 
   it('消息按 API 形状序列化（tool_calls / tool_call_id / reasoning_content）', async () => {
@@ -136,7 +137,7 @@ describe('OpenAIModelRouter chat with tools', () => {
       { role: 'tool', content: '结果', toolCallId: 'c1' },
       { role: 'assistant', content: '答', reasoningContent: '思' }
     ]
-    await router.chat(messages, settings)
+    await router.chat(messages, [settings])
     const init = fetchMock.mock.calls[0]?.[1] as RequestInit
     const body = JSON.parse(String(init.body)) as { messages: Record<string, unknown>[] }
     expect(body.messages).toEqual([

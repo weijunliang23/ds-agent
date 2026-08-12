@@ -97,7 +97,10 @@ describe('RuntimeImpl', () => {
     expect(router.streamChat).toHaveBeenCalledTimes(1)
 
     const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
-    expect(args[1]).toMatchObject({ apiKey: 'k', baseUrl: 'https://api.example.com/v1' })
+    expect((args[1] as Array<{ apiKey: string; baseUrl: string }>)[0]).toMatchObject({
+      apiKey: 'k',
+      baseUrl: 'https://api.example.com/v1'
+    })
     expect((args[0] as Array<{ role: string; content: string }>).map((m) => m.content)).toEqual(['你好'])
 
     const reply2 = await runtime.handleMessage(sid, '还记得刚才吗')
@@ -166,8 +169,8 @@ describe('RuntimeImpl', () => {
     })
     await runtime.start()
     const config = runtime.getConfig()
-    expect(config.llm.apiKey).toBe('ui-key')
-    expect(config.llm.baseUrl).toBe('ui-url')
+    expect(config.llm.providers[0]?.apiKey).toBe('ui-key')
+    expect(config.llm.providers[0]?.baseUrl).toBe('ui-url')
   })
 
   it('handleMessage 透传思考模式 options', async () => {
@@ -247,10 +250,12 @@ describe('RuntimeImpl', () => {
 
     const reply = await runtime.fim({ prompt: 'def fib(a):', suffix: '  return', maxTokens: 128 })
     expect(reply).toBe('补全结果')
-    expect(vi.mocked(router.fim).mock.calls[0]).toEqual([
-      { prompt: 'def fib(a):', suffix: '  return', maxTokens: 128 },
-      expect.objectContaining({ apiKey: 'k', baseUrl: 'u' })
-    ])
+    const fimArgs = vi.mocked(router.fim).mock.calls[0] as unknown[]
+    expect(fimArgs[0]).toEqual({ prompt: 'def fib(a):', suffix: '  return', maxTokens: 128 })
+    expect((fimArgs[1] as Array<{ apiKey: string; baseUrl: string }>)[0]).toMatchObject({
+      apiKey: 'k',
+      baseUrl: 'u'
+    })
   })
 
   it('未启动时 fim 抛错', async () => {
@@ -261,10 +266,10 @@ describe('RuntimeImpl', () => {
   it('reloadConfig 后新设置生效', async () => {
     const { runtime, store } = makeRuntime({       settings: { llm: { apiKey: 'old', baseUrl: 'old-url' } } })
     await runtime.start()
-    expect(runtime.getConfig().llm.apiKey).toBe('old')
+    expect(runtime.getConfig().llm.providers[0]?.apiKey).toBe('old')
 
     await store.save({ llm: { apiKey: 'new', baseUrl: 'new-url' } })
     await runtime.reloadConfig()
-    expect(runtime.getConfig().llm.apiKey).toBe('new')
+    expect(runtime.getConfig().llm.providers[0]?.apiKey).toBe('new')
   })
 })

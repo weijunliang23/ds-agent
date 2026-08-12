@@ -149,7 +149,7 @@ export class RuntimeImpl implements Runtime {
     let partialReasoning = ''
 
     try {
-      const result = await this.router.streamChat(history, config.llm, options, {
+      const result = await this.router.streamChat(history, config.llm.providers, options, {
         onReasoning: (delta) => {
           partialReasoning += delta
           onEvent({ type: 'reasoning', text: delta })
@@ -212,7 +212,7 @@ export class RuntimeImpl implements Runtime {
           return
         }
 
-        const result = await this.router.chat(history, config.llm, options, definitions, signal)
+        const result = await this.router.chat(history, config.llm.providers, options, definitions, signal)
 
         if (result.toolCalls && result.toolCalls.length > 0) {
           this.context.appendMessage(sessionId, {
@@ -292,7 +292,7 @@ export class RuntimeImpl implements Runtime {
       throw new Error('未配置模型：请先在设置中填写 AppKey 与 API 地址')
     }
 
-    const result = await this.router.fim(input, config.llm)
+    const result = await this.router.fim(input, config.llm.providers)
     return result.content
   }
 }

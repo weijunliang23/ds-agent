@@ -1,4 +1,4 @@
-import type { LlmSettings } from '../shared/config'
+import type { LlmProviderConfig, LlmSettings } from '../shared/config'
 
 export interface ToolCall {
   id: string
@@ -57,19 +57,19 @@ const defaultFetch: ChatFetcher = (url, init) => fetch(url, init)
 export interface ModelRouter {
   chat(
     messages: ChatMessage[],
-    settings: LlmSettings,
+    providers: LlmProviderConfig[],
     options?: ChatOptions,
     tools?: ToolDefinition[],
     signal?: AbortSignal
   ): Promise<ChatCompletionResult>
   streamChat(
     messages: ChatMessage[],
-    settings: LlmSettings,
+    providers: LlmProviderConfig[],
     options: ChatOptions | undefined,
     handlers: StreamHandlers,
     signal?: AbortSignal
   ): Promise<ChatCompletionResult>
-  fim(input: FimInput, settings: LlmSettings): Promise<ChatCompletionResult>
+  fim(input: FimInput, providers: LlmProviderConfig[]): Promise<ChatCompletionResult>
 }
 
 function toApiMessages(messages: ChatMessage[]): Record<string, unknown>[] {
@@ -119,13 +119,14 @@ export class OpenAIModelRouter implements ModelRouter {
     return `${baseUrl.replace(/\/+$/, '')}${path}`
   }
 
-  private assertConfigured(settings: LlmSettings): void {
-    if (settings.apiKey === '') {
-      throw new Error('未配置模型：缺少 AppKey')
+  // Pick the first usable provider from the configured list. Ordered fallback
+  // across providers is added by the routing step (Batch 4).
+  private pickProvider(providers: LlmProviderConfig[]): LlmProviderConfig {
+    const usable = providers.find((p) => p.apiKey !== '' && p.baseUrl !== '')
+    if (!usable) {
+      throw new Error('未配置模型：缺少 AppKey 或 API 地址')
     }
-    if (settings.baseUrl === '') {
-      throw new Error('未配置模型：缺少 API 地址')
-    }
+    return usable
   }
 
   private async request(
@@ -168,12 +169,12 @@ export class OpenAIModelRouter implements ModelRouter {
 
   async chat(
     messages: ChatMessage[],
-    settings: LlmSettings,
+    providers: LlmProviderConfig[],
     options?: ChatOptions,
     tools?: ToolDefinition[],
     signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
-    this.assertConfigured(settings)
+    const settings = this.pickProvider(providers)
 
     const body: Record<string, unknown> = {
       model: settings.model,
@@ -216,12 +217,12 @@ export class OpenAIModelRouter implements ModelRouter {
 
   async streamChat(
     messages: ChatMessage[],
-    settings: LlmSettings,
+    providers: LlmProviderConfig[],
     options: ChatOptions | undefined,
     handlers: StreamHandlers,
     signal?: AbortSignal
   ): Promise<ChatCompletionResult> {
-    this.assertConfigured(settings)
+    const settings = this.pickProvider(providers)
 
     const body: Record<string, unknown> = {
       model: settings.model,
@@ -304,8 +305,8 @@ export class OpenAIModelRouter implements ModelRouter {
     }
   }
 
-  async fim(input: FimInput, settings: LlmSettings): Promise<ChatCompletionResult> {
-    this.assertConfigured(settings)
+  async fim(input: FimInput, providers: LlmProviderConfig[]): Promise<ChatCompletionResult> {
+    const settings = this.pickProvider(providers)
 
     const body: Record<string, unknown> = {
       model: settings.model,
