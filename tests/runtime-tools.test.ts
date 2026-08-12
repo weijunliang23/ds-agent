@@ -441,10 +441,9 @@ describe('RuntimeImpl 工具调用循环', () => {
     const messages = firstCall[0] as Array<{ role: string; content: string }>
     expect(messages[0].role).toBe('system')
     expect(messages[0].content).toContain('语言')
+    expect(messages[0].content).toContain('直接回答')
     expect(messages[1].role).toBe('system')
-    expect(messages[1].content).toContain('直接回答')
-    expect(messages[2].role).toBe('system')
-    expect(messages[2].content).toContain('项目计划')
+    expect(messages[1].content).toContain('项目计划')
   })
 
   it('未配置模型时工具路径同样拦截', async () => {
