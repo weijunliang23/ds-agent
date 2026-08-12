@@ -13,9 +13,10 @@ export class FileSettingsStore implements SettingsStore {
   async load(): Promise<StoredSettings> {
     try {
       const raw = await readFile(this.filePath(), 'utf-8')
-      const parsed = JSON.parse(raw) as { llm?: unknown; tools?: unknown }
+      const parsed = JSON.parse(raw) as { llm?: unknown; context?: unknown; tools?: unknown }
       return {
         llm: isRecord(parsed.llm) ? parsed.llm : {},
+        context: isRecord(parsed.context) ? parsed.context : {},
         tools: isRecord(parsed.tools) ? parsed.tools : {}
       }
     } catch {
@@ -29,7 +30,7 @@ export class FileSettingsStore implements SettingsStore {
     await writeFile(
       tmpPath,
       JSON.stringify(
-        { llm: settings.llm ?? {}, tools: settings.tools ?? {} },
+        { llm: settings.llm ?? {}, context: settings.context ?? {}, tools: settings.tools ?? {} },
         null,
         2
       ),

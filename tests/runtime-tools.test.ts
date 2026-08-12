@@ -11,6 +11,7 @@ import { createFileTools } from '../src/main/tools/file-tools'
 import { Permissions, type PermissionRequester } from '../src/main/tools/permissions'
 import { ToolExecutor } from '../src/main/tools/executor'
 import type { Conversation, ConversationStore } from '../src/main/conversation-store'
+import { createConversation } from '../src/main/conversation-store'
 
 const createdDirs: string[] = []
 
@@ -285,6 +286,45 @@ describe('RuntimeImpl 工具调用循环', () => {
 
     const conv = await conversations.store.get(sid)
     expect(conv?.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'assistant'])
+  })
+
+  it('工具调用循环首轮同样注入检索上下文', async () => {
+    const dir = await makeTempDir()
+    const file = join(dir, 'data.txt')
+    await writeFile(file, 'HELLO内容', 'utf-8')
+
+    const { runtime, router, conversations } = makeToolRuntime({ workspace: dir })
+    await runtime.start()
+
+    const old = createConversation('old')
+    old.messages = [
+      { role: 'user', content: '早前我们聊过项目计划' },
+      { role: 'assistant', content: '是的，第一期已完成。' },
+      { role: 'user', content: '记录下第二期目标' },
+      { role: 'assistant', content: '已记录。' },
+      { role: 'user', content: '还有别的吗' },
+      { role: 'assistant', content: '暂时没有。' },
+      { role: 'user', content: '测试环境就绪了吗' },
+      { role: 'assistant', content: '已就绪。' },
+      { role: 'user', content: '好' },
+      { role: 'assistant', content: '好的。' }
+    ]
+    await conversations.store.save(old)
+    await runtime.loadConversation('old')
+
+    vi.mocked(router.chat)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 't1', name: 'read_file', arguments: JSON.stringify({ path: file }) }]
+      })
+      .mockResolvedValueOnce({ content: '完成' })
+
+    await runtime.handleMessage('old', '聊聊项目，顺便读文件')
+
+    const firstCall = vi.mocked(router.chat).mock.calls[0] as unknown[]
+    const messages = firstCall[0] as Array<{ role: string; content: string }>
+    expect(messages[0].role).toBe('system')
+    expect(messages[0].content).toContain('项目计划')
   })
 
   it('未配置模型时工具路径同样拦截', async () => {

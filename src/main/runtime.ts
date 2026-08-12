@@ -1,7 +1,7 @@
 import { isConfigured, loadConfig, type AppConfig, type EnvLike } from '../shared/config'
 import type { SettingsStore } from '../shared/settings'
 import type { ContextEngine } from './context-engine'
-import type { ChatOptions, FimInput, ModelRouter } from './model-router'
+import type { ChatMessage, ChatOptions, FimInput, ModelRouter } from './model-router'
 import type { ToolExecutor } from './tools/executor'
 import {
   createConversation,
@@ -10,6 +10,10 @@ import {
   type ConversationStore,
   type ConversationSummary
 } from './conversation-store'
+
+// Prefix for the synthetic system block that carries retrieved historical
+// snippets; kept separate from real system prompts so tests can assert on it.
+const RETRIEVAL_CONTEXT_PREFIX = '以下是历史对话中与当前问题相关的片段：'
 
 export type StreamMessageEvent =
   | { type: 'reasoning'; text: string }
@@ -82,6 +86,7 @@ export class RuntimeImpl implements Runtime {
   async reloadConfig(): Promise<void> {
     const settings = await this.store.load()
     this.config = loadConfig({ settings, env: this.env })
+    this.context.setChunkSize(this.config.context.chunkSize)
   }
 
   async listConversations(): Promise<ConversationSummary[]> {
@@ -144,7 +149,7 @@ export class RuntimeImpl implements Runtime {
       return
     }
 
-    const history = this.context.getHistory(sessionId)
+    const history = this.buildContextualMessages(sessionId, this.context.getHistory(sessionId), text, config)
     let partialContent = ''
     let partialReasoning = ''
 
@@ -202,7 +207,12 @@ export class RuntimeImpl implements Runtime {
     signal?: AbortSignal
   ): Promise<void> {
     const maxIterations = config.tools.maxIterations
-    let history = this.context.getHistory(sessionId)
+    let history = this.buildContextualMessages(
+      sessionId,
+      this.context.getHistory(sessionId),
+      firstUserText,
+      config
+    )
 
     try {
       for (let i = 0; i < maxIterations; i++) {
@@ -236,7 +246,12 @@ export class RuntimeImpl implements Runtime {
               toolCallId: call.id
             })
           }
-          history = this.context.getHistory(sessionId)
+          history = this.buildContextualMessages(
+            sessionId,
+            this.context.getHistory(sessionId),
+            firstUserText,
+            config
+          )
           continue
         }
 
@@ -263,6 +278,34 @@ export class RuntimeImpl implements Runtime {
       }
       throw err
     }
+  }
+
+  // Build the model input: keep the recent window verbatim for coherence and
+  // inject retrieved snippets from older history as a synthetic system block.
+  private buildContextualMessages(
+    sessionId: string,
+    history: ChatMessage[],
+    userText: string,
+    config: AppConfig
+  ): ChatMessage[] {
+    const { retrievalEnabled, topK, recentWindow } = config.context
+    const windowStart = Math.max(0, history.length - recentWindow)
+    const recent = history.slice(windowStart)
+
+    if (!retrievalEnabled || userText.trim() === '') {
+      return recent
+    }
+
+    const chunks = this.context
+      .retrieve(sessionId, userText, topK)
+      .filter((c) => c.messageIndex < windowStart)
+
+    if (chunks.length === 0) {
+      return recent
+    }
+
+    const contextBlock = `${RETRIEVAL_CONTEXT_PREFIX}\n${chunks.map((c) => c.text).join('\n')}`
+    return [{ role: 'system', content: contextBlock }, ...recent]
   }
 
   private async persistConversation(sessionId: string, firstUserText: string): Promise<void> {

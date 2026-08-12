@@ -11,6 +11,7 @@ export class MemorySettingsStore implements SettingsStore {
   constructor(initial: StoredSettings = {}) {
     this.data = {
       llm: { ...(initial.llm ?? {}) },
+      context: { ...(initial.context ?? {}) },
       tools: { ...(initial.tools ?? {}) }
     }
   }
@@ -18,6 +19,7 @@ export class MemorySettingsStore implements SettingsStore {
   async load(): Promise<StoredSettings> {
     return {
       llm: { ...this.data.llm },
+      context: { ...this.data.context },
       tools: { ...this.data.tools }
     }
   }
@@ -25,6 +27,7 @@ export class MemorySettingsStore implements SettingsStore {
   async save(settings: StoredSettings): Promise<void> {
     this.data = {
       llm: { ...(settings.llm ?? {}) },
+      context: { ...(settings.context ?? {}) },
       tools: { ...(settings.tools ?? {}) }
     }
   }

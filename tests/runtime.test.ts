@@ -38,7 +38,11 @@ function makeConversationStore() {
 }
 
 function makeRuntime(overrides?: {
-  settings?: { llm?: Record<string, unknown>; tools?: Record<string, unknown> }
+  settings?: {
+    llm?: Record<string, unknown>
+    context?: Record<string, unknown>
+    tools?: Record<string, unknown>
+  }
   env?: Record<string, string>
 }) {
   const store = new MemorySettingsStore(overrides?.settings ?? {})
@@ -271,5 +275,85 @@ describe('RuntimeImpl', () => {
     await store.save({ llm: { apiKey: 'new', baseUrl: 'new-url' } })
     await runtime.reloadConfig()
     expect(runtime.getConfig().llm.providers[0]?.apiKey).toBe('new')
+  })
+})
+
+describe('RuntimeImpl 上下文检索注入', () => {
+  function tenOldMessages(): Array<{ role: string; content: string }> {
+    return [
+      { role: 'user', content: '我们讨论过苹果的价格策略' },
+      { role: 'assistant', content: '好的，记录下来了。' },
+      { role: 'user', content: '再看看天气' },
+      { role: 'assistant', content: '今天是晴天。' },
+      { role: 'user', content: '明天的会议几点' },
+      { role: 'assistant', content: '上午十点。' },
+      { role: 'user', content: '帮我记一下会议事项' },
+      { role: 'assistant', content: '已记录。' },
+      { role: 'user', content: '还有什么要补充的' },
+      { role: 'assistant', content: '暂时没有。' }
+    ]
+  }
+
+  async function loadOldConversation(conversations: ReturnType<typeof makeConversationStore>) {
+    const old = createConversation('old')
+    old.messages = tenOldMessages()
+    await conversations.store.save(old)
+    return old.id
+  }
+
+  it('超过窗口时注入检索到的历史片段为 system 上下文块，窗口内原样保留', async () => {
+    const { runtime, router, conversations } = makeRuntime({
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
+    })
+    await runtime.start()
+    await loadOldConversation(conversations)
+    await runtime.loadConversation('old')
+
+    await runtime.streamMessage('old', '现在聊聊苹果', undefined, () => {})
+    const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
+    const messages = args[0] as Array<{ role: string; content: string }>
+
+    expect(messages[0].role).toBe('system')
+    expect(messages[0].content).toContain('苹果的价格策略')
+    expect(messages[0].content).toContain('以下是历史对话中与当前问题相关的片段')
+    expect(messages.length).toBe(1 + 8)
+    expect(messages.slice(1).map((m) => m.content)).toEqual([
+      '今天是晴天。',
+      '明天的会议几点',
+      '上午十点。',
+      '帮我记一下会议事项',
+      '已记录。',
+      '还有什么要补充的',
+      '暂时没有。',
+      '现在聊聊苹果'
+    ])
+  })
+
+  it('retrievalEnabled=false 时不注入 system 上下文块', async () => {
+    const { runtime, router, conversations } = makeRuntime({
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' }, context: { retrievalEnabled: false } }
+    })
+    await runtime.start()
+    await loadOldConversation(conversations)
+    await runtime.loadConversation('old')
+
+    await runtime.streamMessage('old', '现在聊聊苹果', undefined, () => {})
+    const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
+    const messages = args[0] as Array<{ role: string; content: string }>
+    expect(messages.every((m) => m.role !== 'system')).toBe(true)
+  })
+
+  it('检索无命中时不注入 system 块', async () => {
+    const { runtime, router, conversations } = makeRuntime({
+      settings: { llm: { apiKey: 'k', baseUrl: 'u' } }
+    })
+    await runtime.start()
+    await loadOldConversation(conversations)
+    await runtime.loadConversation('old')
+
+    await runtime.streamMessage('old', '量子物理是什么', undefined, () => {})
+    const args = vi.mocked(router.streamChat).mock.calls[0] as unknown[]
+    const messages = args[0] as Array<{ role: string; content: string }>
+    expect(messages.every((m) => m.role !== 'system')).toBe(true)
   })
 })
