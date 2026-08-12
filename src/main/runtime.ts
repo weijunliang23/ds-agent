@@ -18,7 +18,7 @@ const RETRIEVAL_CONTEXT_PREFIX = '以下是历史对话中与当前问题相关�
 // Lightweight guidance that discourages unnecessary tool usage (e.g. calling
 // read_file/write_file for a trivial arithmetic question and looping on them).
 const TOOL_GUIDANCE_PROMPT =
-  '你是 my-agent 的助手。简单问题请直接回答；仅在确实需要读写本地文件或查看目录时才调用 read_file/write_file/list_dir 工具，不要为了验证或演示而重复调用工具。'
+  '你是 my-agent 的助手。简单问题请直接回答；仅在确实需要读写本地文件或查看目录时才调用 read_file/write_file/list_dir 工具，不要为了验证或演示而重复调用工具，也不要重复调用相同参数的同一工具。'
 
 // Retrieves relevant chunks for a session; injected by buildContextualMessages.
 type RetrieveFn = (sessionId: string, query: string, topK: number) => ContextChunk[]
@@ -260,6 +260,10 @@ export class RuntimeImpl implements Runtime {
     signal?: AbortSignal
   ): Promise<void> {
     const maxIterations = config.tools.maxIterations
+    // Dedup guard: the same tool call (name + normalized args) only executes
+    // once per turn; repeats get a "result already in context" prompt instead
+    // of hammering the same tool (e.g. list_dir() called in a loop).
+    const executedSignatures = new Set<string>()
     let history = this.buildContextualMessages(
       sessionId,
       this.context.getHistory(sessionId),
@@ -287,6 +291,19 @@ export class RuntimeImpl implements Runtime {
           })
           for (const call of result.toolCalls) {
             onEvent({ type: 'tool:start', name: call.name, arguments: call.arguments })
+            const signature = toolCallSignature(call)
+            if (executedSignatures.has(signature)) {
+              const duplicateContent =
+                `调用 ${call.name}（参数相同）的结果已在上下文中，请直接基于已有结果回答，不要重复调用相同工具。`
+              onEvent({ type: 'tool:done', name: call.name, ok: true, content: duplicateContent })
+              this.context.appendMessage(sessionId, {
+                role: 'tool',
+                content: duplicateContent,
+                toolCallId: call.id
+              })
+              continue
+            }
+            executedSignatures.add(signature)
             const executed = await this.tools!.execute(call.name, parseToolArguments(call.arguments))
             onEvent({
               type: 'tool:done',
@@ -396,4 +413,32 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   } catch {
     return {}
   }
+}
+
+// Canonical identity of a tool call so `{"path":""}` and `{"path":""}` (or `{}`
+// and `{}`) count as the same call; key order is normalized for robustness.
+function toolCallSignature(call: { name: string; arguments: string }): string {
+  try {
+    const parsed = JSON.parse(call.arguments) as unknown
+    return `${call.name}:${JSON.stringify(sortKeys(parsed))}`
+  } catch {
+    return `${call.name}:${call.arguments}`
+  }
+}
+
+// Recursively sort object keys so identical argument objects (regardless of
+// insertion order) produce the same JSON string.
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeys)
+  }
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const key of Object.keys(record).sort()) {
+      out[key] = sortKeys(record[key])
+    }
+    return out
+  }
+  return value
 }

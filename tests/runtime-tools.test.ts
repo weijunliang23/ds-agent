@@ -334,6 +334,76 @@ describe('RuntimeImpl 工具调用循环', () => {
     expect(toolMessages[0].content).toContain('note.txt')
   })
 
+  it('模型重复调用相同工具时整轮去重并提示基于已有结果回答', async () => {
+    const dir = await makeTempDir()
+    const file = join(dir, 'data.txt')
+    await writeFile(file, 'CONTENT', 'utf-8')
+
+    const { runtime, router } = makeToolRuntime({ workspace: dir })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    vi.mocked(router.chat)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 't1', name: 'read_file', arguments: JSON.stringify({ path: file }) }]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 't2', name: 'read_file', arguments: JSON.stringify({ path: file }) }]
+      })
+      .mockResolvedValueOnce({ content: '内容已读' })
+
+    const toolDone: Array<{ name: string; ok: boolean; content: string }> = []
+    await runtime.streamMessage(sid, '读文件', undefined, (event) => {
+      if (event.type === 'tool:done') {
+        toolDone.push({ name: event.name, ok: event.ok, content: event.content })
+      }
+    })
+
+    expect(vi.mocked(router.chat)).toHaveBeenCalledTimes(3)
+    expect(toolDone).toHaveLength(2)
+    expect(toolDone[0].content).toBe('CONTENT')
+    expect(toolDone[1].content).toContain('不要重复')
+
+    const thirdCall = vi.mocked(router.chat).mock.calls[2] as unknown[]
+    const toolMessages = (
+      thirdCall[0] as Array<{ role: string; content: string }>
+    ).filter((m) => m.role === 'tool')
+    expect(toolMessages).toHaveLength(2)
+    expect(toolMessages[1].content).toContain('不要重复')
+  })
+
+  it('不同参数的相同工具调用不会被去重', async () => {
+    const dir = await makeTempDir()
+    const a = join(dir, 'a.txt')
+    const b = join(dir, 'b.txt')
+    await writeFile(a, 'AAA', 'utf-8')
+    await writeFile(b, 'BBB', 'utf-8')
+
+    const { runtime, router } = makeToolRuntime({ workspace: dir })
+    await runtime.start()
+    const sid = await runtime.createSession()
+
+    vi.mocked(router.chat)
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 't1', name: 'read_file', arguments: JSON.stringify({ path: a }) }]
+      })
+      .mockResolvedValueOnce({
+        content: '',
+        toolCalls: [{ id: 't2', name: 'read_file', arguments: JSON.stringify({ path: b }) }]
+      })
+      .mockResolvedValueOnce({ content: '两次都读了' })
+
+    const toolDone: string[] = []
+    await runtime.streamMessage(sid, '读两个文件', undefined, (event) => {
+      if (event.type === 'tool:done') toolDone.push(event.content)
+    })
+
+    expect(toolDone).toEqual(['AAA', 'BBB'])
+  })
+
   it('工具调用循环首轮同样注入检索上下文', async () => {
     const dir = await makeTempDir()
     const file = join(dir, 'data.txt')
