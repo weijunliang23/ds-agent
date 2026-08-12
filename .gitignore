@@ -10,6 +10,9 @@ release/
 *.log
 npm-debug.log*
 
+# test artifacts written by the agent's tools into the repo root
+answer.txt
+
 # environment
 .env
 .env.local
