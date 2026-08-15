@@ -2,6 +2,10 @@
   "name": "my-agent",
   "version": "0.1.0",
   "description": "Electron 桌面 AI Agent 应用",
+  "author": {
+    "name": "weijunliang23",
+    "email": "A929314787@163.com"
+  },
   "main": "./out/main/index.js",
   "private": true,
   "type": "module",
